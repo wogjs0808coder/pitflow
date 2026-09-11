@@ -34,8 +34,8 @@ export default function Dashboard() {
           <h1>{user?.name}님의 차고</h1>
           <p>차량 정보를 확인하고 필요한 정비를 살펴보세요.</p>
         </div>
-        <Link className="button primary" href="/vehicles">
-          <Plus size={18} /> 차량 관리
+        <Link className="button primary" href="/appointments/new">
+          <Plus size={18} /> 정비 예약
         </Link>
       </div>
       {error ? (
@@ -67,16 +67,19 @@ export default function Dashboard() {
               <span className="eyebrow">KEEP YOUR CAR IN VIEW</span>
               <h2>
                 {data.cars.length
-                  ? "차량 정보부터 꼼꼼하게."
+                  ? "다음 정비, 미리 예약하세요."
                   : "첫 차량을 등록해 보세요."}
               </h2>
               <p>
                 {data.cars.length
-                  ? "차량번호와 주행거리를 최신 상태로 관리하세요. 내 차량 정보는 로그인한 계정에서만 확인할 수 있습니다."
+                  ? "내 차량과 정비 항목을 선택하고 방문 가능한 시간을 확인하세요. 신청한 예약은 정비소의 확인 후 확정됩니다."
                   : "차종, 연식, 주행거리를 입력하면 나만의 차고에서 차량 정보를 관리할 수 있습니다."}
               </p>
-              <Link className="inline-link" href="/vehicles">
-                {data.cars.length ? "차량 정보 확인" : "차량 등록하기"}
+              <Link
+                className="inline-link"
+                href={data.cars.length ? "/appointments/new" : "/vehicles"}
+              >
+                {data.cars.length ? "정비 예약하기" : "차량 등록하기"}
                 <ArrowUpRight size={17} />
               </Link>
             </section>

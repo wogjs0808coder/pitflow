@@ -12,10 +12,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class VehicleService {
   private final VehicleRepository vehicles;
   private final UserRepository users;
+  private final org.springframework.jdbc.core.JdbcTemplate db;
 
-  public VehicleService(VehicleRepository vehicles, UserRepository users) {
+  public VehicleService(
+      VehicleRepository vehicles,
+      UserRepository users,
+      org.springframework.jdbc.core.JdbcTemplate db) {
     this.vehicles = vehicles;
     this.users = users;
+    this.db = db;
   }
 
   private UUID ownerId(String email) {
@@ -52,7 +57,18 @@ public class VehicleService {
 
   @Transactional
   public void delete(String email, UUID id) {
-    vehicles.delete(owned(email, id));
+    var vehicle =
+        vehicles
+            .lockOwned(id, ownerId(email))
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "차량을 찾을 수 없습니다."));
+    if (Boolean.TRUE.equals(
+        db.queryForObject(
+            "SELECT EXISTS (SELECT 1 FROM appointments WHERE vehicle_id = ?)",
+            Boolean.class,
+            id))) {
+      throw new ApiException(HttpStatus.CONFLICT, "예약 이력이 있는 차량은 삭제할 수 없습니다.");
+    }
+    vehicles.delete(vehicle);
     vehicles.flush();
   }
 }

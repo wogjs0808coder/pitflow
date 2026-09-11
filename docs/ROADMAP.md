@@ -8,17 +8,22 @@
 - [x] 본인 차량 등록·수정·삭제
 - [x] 정비 항목 조회·관리자 편집·비활성화
 - [x] 통합 테스트, 빌드, Windows 실행 문서
-- [ ] 실제 PostgreSQL 및 Docker 전체 실행 확인
-- [ ] 브라우저 시각적 QA
-- [ ] GitHub 원격 업로드 및 CI 결과 확인
+- [x] 1단계 실제 PostgreSQL 및 Docker 전체 실행 확인 (사용자 Windows 환경)
+- [x] 1단계 대시보드 화면 확인 (사용자 제공 화면)
+- [x] 1단계 GitHub main 업로드
+- [ ] 2단계 Windows Docker 및 고객·관리자 화면 최종 시연
 
-## 2단계 — 정비 예약
-- work_bays, appointments, appointment_items, slot_allocations 추가
-- 30분 슬롯 기준, 작업 공간별 연속 슬롯 점유
-- 작업 공간과 시작 시각에 고유 제약조건
-- 예약 확정·취소·방문·미방문 상태
-- 동시 예약 두 건 중 한 건만 성공하는 테스트
-- 고객의 예약 내역과 관리자 캘린더
+## 2단계 — 정비 예약 (구현)
+- [x] work_bays, appointments, appointment_items, slot_allocations V2 추가
+- [x] 30분 슬롯 기준, 작업 공간별 연속 슬롯 점유
+- [x] 작업 공간·차량과 시각의 고유 제약조건, 충돌 시 전체 롤백
+- [x] 예약 신청·확정·취소·방문·미방문과 상태 전이 제한
+- [x] 차량 소유권·관리자 권한·CSRF 검사와 예약 이력 차량 삭제 제한
+- [x] 예약 당시 차량 정보·항목·가격·시간 스냅샷
+- [x] 동시 예약, 후반 슬롯 충돌 롤백, 확정·취소 경쟁 테스트
+- [x] 고객 예약 폼·월별 내역과 관리자 일별 캘린더
+- [x] 실제 PostgreSQL을 사용하는 GitHub Actions 검사 구성
+- [ ] 2단계 사용자 Windows 환경 시연 확인
 
 ## 3단계 — 정비 작업·부품
 - work_orders, work_order_items, parts, stock_movements 추가
