@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: pitflow-api
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/pitflow}
+    username: ${DB_USERNAME:pitflow}
+    password: ${DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+server:
+  port: ${PORT:8080}
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        name: PITFLOW_SESSION
+        http-only: true
+        same-site: lax
+        secure: ${COOKIE_SECURE:false}
+  error:
+    include-message: never
+    include-stacktrace: never
+pitflow:
+  bootstrap:
+    admin-email: ${PITFLOW_ADMIN_EMAIL:}
+    admin-password: ${PITFLOW_ADMIN_PASSWORD:}

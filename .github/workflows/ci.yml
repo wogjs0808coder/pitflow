@@ -1,0 +1,52 @@
+name: Phase 1 checks
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: pitflow_test
+          POSTGRES_USER: pitflow_test
+          POSTGRES_PASSWORD: ci-test-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pitflow_test -d pitflow_test"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Test API against PostgreSQL
+        run: ./mvnw -B -ntp verify
+        env:
+          TEST_DB_URL: jdbc:postgresql://localhost:5432/pitflow_test
+          TEST_DB_USERNAME: pitflow_test
+          TEST_DB_PASSWORD: ci-test-only-password
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
