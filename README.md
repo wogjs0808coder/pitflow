@@ -125,7 +125,7 @@ npm run typecheck
 실제 PostgreSQL로 테스트하려면 **운영 DB가 아닌 빈 테스트 DB**에 `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`를 지정해야 합니다. 테스트는 해당 DB의 사용자·차량·정비 항목·예약·예약 슬롯 데이터를 정리합니다.
 
 ## 소스 위치
-
+ 
 | 경로 | 내용 |
 |---|---|
 | `backend/src/main/java/com/pitflow/auth` | 인증, 보안, 관리자 생성 |
