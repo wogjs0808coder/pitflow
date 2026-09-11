@@ -135,24 +135,3 @@ npm run typecheck
 | `docs` | API 명세, 설계, 단계별 계획, 검증 기록 |
 | `.github/workflows/ci.yml` | GitHub 자동 검사 |
 
-## GitHub에 처음 저장
-
-GitHub에서 새 `pitflow` 저장소를 만드세요. 최초 소스 업로드 전에는 비공개 저장소를 권장합니다. 아래 명령은 **아직 README 등을 넣지 않은 빈 원격 저장소**에 사용합니다.
-
-```powershell
-cd "$env:USERPROFILE\Desktop\pitflow"
-git init -b main
-git add .
-git status
-git commit -m "feat: implement PitFlow phase one"
-git remote add origin https://github.com/wogjs0808coder/pitflow.git
-git push -u origin main
-```
-
-위 원격 주소는 계획한 저장소명 예시입니다. 실제 만든 저장소 주소에 맞추세요. 이미 원격에 커밋이 있다면 먼저 해당 저장소를 clone한 뒤 프로젝트 파일을 복사하여 커밋하세요. 강제 push는 필요하지 않습니다.
-
-## 다음 단계
-
-[단계별 계획](docs/ROADMAP.md), [설계](docs/ARCHITECTURE.md), [API 명세](docs/API.md), [검증 기록](docs/VALIDATION.md)을 확인하세요.
-
-이 버전은 로컬 개발·졸업작품 시연용입니다. 인터넷 공개 운영 전에는 HTTPS 및 Secure 쿠키, 로그인 요청 제한, 계정 복구, 백업·모니터링 등을 추가로 검토해야 합니다.
