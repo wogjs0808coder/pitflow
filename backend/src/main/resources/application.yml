@@ -28,6 +28,12 @@ server:
     include-message: never
     include-stacktrace: never
 pitflow:
+  booking:
+    timezone: Asia/Seoul
+    opens-at: "09:00"
+    closes-at: "18:00"
+    closed-days: SUNDAY
+    horizon-days: 30
   bootstrap:
     admin-email: ${PITFLOW_ADMIN_EMAIL:}
     admin-password: ${PITFLOW_ADMIN_PASSWORD:}

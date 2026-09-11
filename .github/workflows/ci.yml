@@ -1,4 +1,4 @@
-name: Phase 1 checks
+name: PitFlow checks
 on:
   push:
     branches: [main, "feat/**"]

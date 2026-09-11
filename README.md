@@ -2,7 +2,7 @@
 
 자동차 정비 예약 및 부품 재고 통합 관리 시스템 — 졸업작품 프로젝트.
 
-현재는 **1단계: 계정 · 차량 · 정비 항목 관리**를 구현했습니다. 예약, 작업지시서, 부품 재고, 수납은 다음 단계입니다.
+현재 **2단계: 정비 예약**까지 구현했습니다. 작업지시서, 부품 재고, 수납은 다음 단계입니다.
 
 ## 구현 기능
 
@@ -14,6 +14,8 @@
 - PostgreSQL + Flyway 스키마 관리
 - Next.js 한국어 화면과 반응형 레이아웃
 - Docker Compose 및 GitHub Actions 검사 구성
+- 30분 단위 정비 예약, 내 예약 조회·취소, 관리자 일별 예약 캘린더
+- 작업 공간·차량별 중복 슬롯 방지, 예약 시점 공임·소요 시간 보존
 
 엔진오일·타이어·배터리 교체 3개 항목은 **시연용 공임과 예상 시간**으로 초기화됩니다. 실제 가격표가 아닙니다. 부품 비용은 별도입니다.
 
@@ -47,7 +49,9 @@ docker compose logs -f backend
 - `setup.ps1`은 임의 비밀번호를 생성하고 기존 `.env`는 덮어쓰지 않습니다.
 - `.env`는 Git에서 제외됩니다. 비밀번호를 README·소스·스크린샷에 올리지 마세요.
 - 관리자 환경변수는 **최초 생성용**입니다. 이후 값을 바꿔도 기존 계정 비밀번호는 변경되지 않습니다.
-- 포트 3000, 8080, 5432는 다른 프로그램이 사용하지 않아야 합니다.
+- 전체 Docker 실행은 프론트엔드 3000, 백엔드 8081을 사용합니다. DB 포트는 외부에 공개하지 않습니다.
+- 컨테이너 내부 주소는 `http://backend:8080`, `jdbc:postgresql://db:5432/pitflow`를 유지합니다.
+- 백엔드 이미지는 실행이 확인된 Temurin 17 `noble` 계열을 사용합니다.
 - 기본 포트 바인딩은 본인 컴퓨터에서만 접속할 수 있는 `127.0.0.1`입니다.
 
 ```powershell
@@ -63,12 +67,13 @@ DB 볼륨이 생성된 뒤 `.env`의 DB 비밀번호만 바꾸면 기존 DB 비�
 
 필수: JDK 17, Node.js 22 이상, Docker Desktop. Maven은 Wrapper가 자동으로 준비합니다.
 
-### 1. DB
+### 1. DB (호스트 5433 포트)
 
 ```powershell
 cd "$env:USERPROFILE\Desktop\pitflow"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
-docker compose up -d db
+docker compose down
+docker compose -f compose.yaml -f compose.dev.yaml up -d db
 ```
 
 ### 2. Spring Boot — 별도 PowerShell
@@ -78,7 +83,7 @@ cd "$env:USERPROFILE\Desktop\pitflow"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
 ```
 
-이 스크립트가 `.env`의 필요한 값만 읽고 `backend\mvnw.cmd spring-boot:run`을 실행합니다. Spring Boot 자체는 루트 `.env`를 자동으로 읽지 않습니다.
+이 스크립트가 `.env`의 필요한 값만 읽고 `backend\mvnw.cmd spring-boot:run`을 실행합니다. Spring Boot 자체는 루트 `.env`를 자동으로 읽지 않습니다. 기본 API 포트는 8081, DB 주소는 `jdbc:postgresql://127.0.0.1:5433/pitflow`이며, 미리 설정한 `PORT`, `DB_URL`이 있으면 사용합니다.
 
 ### 3. Next.js — 별도 PowerShell
 
@@ -88,7 +93,7 @@ npm ci
 npm run dev
 ```
 
-기본 API 대상은 `http://127.0.0.1:8080`입니다. 변경하려면 `frontend/.env.example`을 `frontend/.env.local`로 복사해서 수정한 뒤 개발 서버를 재시작하세요. 배포 빌드의 프록시 대상은 빌드 시점에 정해집니다.
+기본 API 대상은 `http://127.0.0.1:8081`입니다. 변경하려면 `frontend/.env.example`을 `frontend/.env.local`로 복사해서 수정한 뒤 개발 서버를 재시작하세요. 배포 빌드의 프록시 대상은 빌드 시점에 정해집니다.
 
 전체 Docker 실행과 개별 개발 실행을 같은 포트에서 동시에 실행하지 마세요.
 
@@ -117,7 +122,7 @@ npm run typecheck
 
 로컬 Java 테스트는 H2 PostgreSQL 모드의 일회용 DB를 사용합니다. GitHub Actions는 별도 PostgreSQL 테스트 DB로 같은 테스트를 실행하도록 구성했습니다. 테스트에 쓰는 계정과 암호는 테스트 전용입니다.
 
-실제 PostgreSQL로 테스트하려면 **운영 DB가 아닌 빈 테스트 DB**에 `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`를 지정해야 합니다. 테스트는 해당 DB의 사용자·차량·정비 항목 데이터를 정리합니다.
+실제 PostgreSQL로 테스트하려면 **운영 DB가 아닌 빈 테스트 DB**에 `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`를 지정해야 합니다. 테스트는 해당 DB의 사용자·차량·정비 항목·예약·예약 슬롯 데이터를 정리합니다.
 
 ## 소스 위치
 

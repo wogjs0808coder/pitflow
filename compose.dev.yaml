@@ -1,0 +1,5 @@
+# Optional: expose only the DB when running Java/Next.js directly from VSCode.
+# docker compose -f compose.yaml -f compose.dev.yaml up -d db
+services:
+  db:
+    ports: ["127.0.0.1:5433:5432"]

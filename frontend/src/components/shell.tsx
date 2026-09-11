@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   CarFront,
+  CalendarDays,
   Gauge,
   Wrench,
   Settings2,
@@ -39,13 +40,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { href: "/dashboard", label: "내 정비 홈", icon: Gauge },
     { href: "/vehicles", label: "내 차량", icon: CarFront },
     { href: "/services", label: "정비 항목", icon: Wrench },
+    { href: "/appointments", label: "내 정비 예약", icon: CalendarDays },
   ];
   if (user.role === "ADMIN")
-    links.push({
-      href: "/admin/services",
-      label: "정비 항목 관리",
-      icon: Settings2,
-    });
+    links.push(
+      { href: "/admin/appointments", label: "예약 캘린더", icon: CalendarDays },
+      {
+        href: "/admin/services",
+        label: "정비 항목 관리",
+        icon: Settings2,
+      },
+    );
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">
@@ -64,8 +69,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <Link
               key={href}
               href={href}
-              className={path === href ? "nav-item selected" : "nav-item"}
-              aria-current={path === href ? "page" : undefined}
+              className={
+                path === href || path.startsWith(href + "/")
+                  ? "nav-item selected"
+                  : "nav-item"
+              }
+              aria-current={
+                path === href || path.startsWith(href + "/")
+                  ? "page"
+                  : undefined
+              }
             >
               <Icon size={20} aria-hidden />
               {label}
