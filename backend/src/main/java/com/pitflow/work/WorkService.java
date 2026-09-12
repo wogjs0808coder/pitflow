@@ -190,8 +190,19 @@ public class WorkService {
         });
   }
 
-  public List<Map<String, Object>> parts() {
-    return rows("SELECT * FROM parts ORDER BY sku");
+  public List<Map<String, Object>> parts(boolean includeArchived) {
+    var parts =
+        rows(
+            "SELECT * FROM parts"
+                + (includeArchived ? "" : " WHERE archived=FALSE")
+                + " ORDER BY sku");
+    var links =
+        rows(
+            "SELECT r.part_id,s.id AS service_id,s.name FROM service_part_requirements r JOIN"
+                + " service_items s ON s.id=r.service_id ORDER BY s.name");
+    for (var p : parts)
+      p.put("services", links.stream().filter(l -> id(l, "part_id").equals(id(p, "id"))).toList());
+    return parts;
   }
 
   public Map<String, Object> part(String email, UUID key, UUID existing, Part r) {
@@ -215,6 +226,7 @@ public class WorkService {
                 r.active());
           else {
             var before = lockPart(value);
+            if (Boolean.TRUE.equals(before.get("archived"))) throw conflict("삭제한 부품은 먼저 복원해 주세요.");
             if (!r.unit().name().equals(before.get("unit")))
               throw conflict("등록 후 단위는 변경할 수 없습니다. 새 부품으로 등록해 주세요.");
             db.update(
@@ -232,6 +244,32 @@ public class WorkService {
 
   private Map<String, Object> lockPart(UUID part) {
     return one("SELECT * FROM parts WHERE id=? FOR UPDATE", part);
+  }
+
+  public Map<String, Object> archive(String email, UUID key, UUID part, Reason r, boolean restore) {
+    return command(
+        email,
+        key,
+        (restore ? "restore/" : "archive/") + part,
+        r,
+        () -> {
+          var p = lockPart(part);
+          boolean wasArchived = Boolean.TRUE.equals(p.get("archived"));
+          if ((restore && !wasArchived) || (!restore && wasArchived)) return clean(p);
+          if (!restore && number(p, "quantity").signum() != 0)
+            throw conflict("재고가 남아 있는 부품은 삭제할 수 없습니다. 실제 사용·반환·실사 내역을 먼저 정리해 주세요.");
+          // Soft deletion preserves all original movements and catalog links; restore stays
+          // inactive.
+          db.update("UPDATE parts SET archived=?,active=FALSE WHERE id=?", !restore, part);
+          db.update(
+              "INSERT INTO part_events VALUES (?,?,?,?,?)",
+              UUID.randomUUID(),
+              part,
+              restore ? "RESTORE" : "ARCHIVE",
+              r.reason().strip(),
+              now());
+          return clean(one("SELECT * FROM parts WHERE id=?", part));
+        });
   }
 
   private Map<String, Object> lockWork(UUID work) {
@@ -336,6 +374,15 @@ public class WorkService {
     result.put(
         "items",
         rows("SELECT * FROM work_order_items WHERE work_order_id=? ORDER BY name,id", work));
+    if (admin)
+      result.put(
+          "suggested_parts",
+          rows(
+              "SELECT DISTINCT p.id,p.name,p.unit,p.quantity,p.active FROM"
+                  + " service_part_requirements r JOIN work_order_items i ON"
+                  + " i.service_item_id=r.service_id JOIN parts p ON p.id=r.part_id WHERE"
+                  + " i.work_order_id=? ORDER BY p.name",
+              work));
     result.put(
         "events",
         admin
@@ -454,7 +501,7 @@ public class WorkService {
       String kind,
       BigDecimal quantity,
       String reason) {
-    BigDecimal delta = kind.equals("USE") ? quantity.negate() : quantity;
+    BigDecimal delta = Set.of("USE", "ADJUST_OUT").contains(kind) ? quantity.negate() : quantity;
     BigDecimal balance = number(p, "quantity").add(delta);
     if (balance.signum() < 0) throw conflict(p.get("name") + ": 재고가 부족합니다.");
     if (balance.compareTo(MAX_QUANTITY) > 0) throw bad("최대 보관 수량을 초과합니다.");
@@ -503,6 +550,33 @@ public class WorkService {
           var p = lockPart(part);
           if (!active(p)) throw conflict("비활성 부품은 입고할 수 없습니다.");
           movement(key, actor(email, true), p, null, null, "RECEIPT", amount, r.reason());
+          return operation(key);
+        });
+  }
+
+  public Map<String, Object> adjust(String email, UUID key, UUID part, Adjustment r) {
+    return command(
+        email,
+        key,
+        "adjust/" + part,
+        r,
+        () -> {
+          var p = lockPart(part);
+          if (Boolean.TRUE.equals(p.get("archived"))) throw conflict("삭제한 부품은 먼저 복원해 주세요.");
+          var current = number(p, "quantity");
+          if (current.compareTo(r.expectedQuantity()) != 0)
+            throw conflict("다른 작업으로 재고가 변경되었습니다. 새로고침 후 실사 수량을 다시 확인해 주세요.");
+          var delta = r.quantity().subtract(current);
+          if (delta.signum() != 0)
+            movement(
+                key,
+                actor(email, true),
+                p,
+                null,
+                null,
+                delta.signum() > 0 ? "ADJUST_IN" : "ADJUST_OUT",
+                delta.abs(),
+                r.reason());
           return operation(key);
         });
   }
@@ -569,6 +643,16 @@ public class WorkService {
           if (returned.add(amount).compareTo(number(use, "quantity")) > 0)
             throw conflict("반환 수량이 남은 사용 수량보다 큽니다.");
           var p = lockPart(id(use, "part_id"));
+          if (Boolean.TRUE.equals(p.get("archived"))) {
+            db.update("UPDATE parts SET archived=FALSE WHERE id=?", p.get("id"));
+            db.update(
+                "INSERT INTO part_events VALUES (?,?,?,?,?)",
+                UUID.randomUUID(),
+                p.get("id"),
+                "RESTORE",
+                "실물 반환으로 목록 복원",
+                now());
+          }
           // Historical name, unit and price belong to the original use, even after catalog edits.
           p.put("name", use.get("part_name"));
           p.put("unit", use.get("unit"));

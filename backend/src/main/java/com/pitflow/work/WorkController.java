@@ -36,8 +36,26 @@ public class WorkController {
   }
 
   @GetMapping("/parts")
-  public Object parts() {
-    return s.parts();
+  public Object parts(@RequestParam(defaultValue = "false") boolean includeArchived) {
+    return s.parts(includeArchived);
+  }
+
+  @DeleteMapping("/parts/{id}")
+  public Object archive(
+      Principal p,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id,
+      @Valid @RequestBody Reason r) {
+    return s.archive(p.getName(), key, id, r, false);
+  }
+
+  @PostMapping("/parts/{id}/restore")
+  public Object restore(
+      Principal p,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id,
+      @Valid @RequestBody Reason r) {
+    return s.archive(p.getName(), key, id, r, true);
   }
 
   @PostMapping("/parts")
@@ -67,6 +85,15 @@ public class WorkController {
   @GetMapping("/parts/{id}/movements")
   public Object movements(@PathVariable UUID id) {
     return s.movements(id);
+  }
+
+  @PostMapping("/parts/{id}/adjustments")
+  public Object adjustment(
+      Principal p,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id,
+      @Valid @RequestBody Adjustment r) {
+    return s.adjust(p.getName(), key, id, r);
   }
 
   @GetMapping("/work-orders")

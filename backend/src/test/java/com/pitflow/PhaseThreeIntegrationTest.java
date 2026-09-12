@@ -108,7 +108,12 @@ class PhaseThreeIntegrationTest {
 
   MvcResult request(String method, String path, Object body, UUID key, String email, boolean csrf)
       throws Exception {
-    MockHttpServletRequestBuilder req = method.equals("POST") ? post(path) : patch(path);
+    MockHttpServletRequestBuilder req =
+        switch (method) {
+          case "POST" -> post(path);
+          case "DELETE" -> delete(path);
+          default -> patch(path);
+        };
     req.with(user(email).roles(email.contains("admin") ? "ADMIN" : "CUSTOMER"));
     if (csrf) req.with(csrf());
     if (key != null) req.header("Idempotency-Key", key.toString());
@@ -191,11 +196,221 @@ class PhaseThreeIntegrationTest {
   void reconciles(UUID p) {
     var net =
         db.queryForObject(
-            "SELECT COALESCE(SUM(CASE WHEN kind='USE' THEN -quantity ELSE quantity END),0) FROM"
-                + " stock_movements WHERE part_id=?",
+            "SELECT COALESCE(SUM(CASE WHEN kind IN ('USE','ADJUST_OUT') THEN -quantity ELSE"
+                + " quantity END),0) FROM stock_movements WHERE part_id=?",
             BigDecimal.class,
             p);
     assertThat(balance(p)).isEqualByComparingTo(net);
+  }
+
+  @Test
+  void correctionIsFractionalIdempotentValidatedAndAudited() throws Exception {
+    UUID p = part("A", "4.5"), key = UUID.randomUUID();
+    String path = "/api/admin/parts/" + p + "/adjustments";
+    var body = Map.of("quantity", "1.125", "expectedQuantity", "4.5", "reason", "실사");
+    for (int i = 0; i < 2; i++)
+      assertThat(request("POST", path, body, key, admin, true).getResponse().getStatus())
+          .isEqualTo(200);
+    assertThat(balance(p)).isEqualByComparingTo("1.125");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM stock_movements WHERE kind='ADJUST_OUT'", Integer.class))
+        .isEqualTo(1);
+    ok("POST", path, Map.of("quantity", "2.25", "expectedQuantity", "1.125", "reason", "실사"));
+    assertThat(
+            request("POST", path, body, UUID.randomUUID(), admin, true).getResponse().getStatus())
+        .isEqualTo(409);
+    for (String q : List.of("-1", "0.0001"))
+      assertThat(
+              request(
+                      "POST",
+                      path,
+                      Map.of("quantity", q, "expectedQuantity", "2.25", "reason", "실사"),
+                      UUID.randomUUID(),
+                      admin,
+                      true)
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(400);
+    assertThat(
+            request("POST", path, body, UUID.randomUUID(), admin, false).getResponse().getStatus())
+        .isEqualTo(403);
+    assertThat(
+            request("POST", path, body, UUID.randomUUID(), "work-customer@example.com", true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    reconciles(p);
+  }
+
+  @Test
+  void correctionCannotOverwriteConcurrentUseOrCorrection() throws Exception {
+    UUID w = running(), p = part("A", "5");
+    String path = "/api/admin/parts/" + p + "/adjustments";
+    var result =
+        race(
+            () ->
+                request(
+                        "POST",
+                        path,
+                        Map.of("quantity", "3", "expectedQuantity", "5", "reason", "실사"),
+                        UUID.randomUUID(),
+                        admin,
+                        true)
+                    .getResponse()
+                    .getStatus(),
+            () ->
+                request("POST", usePath(w), use(p, "1"), UUID.randomUUID(), admin, true)
+                    .getResponse()
+                    .getStatus());
+    assertThat(result.get(0)).isIn(200, 409);
+    assertThat(result.get(1)).isEqualTo(200);
+    assertThat(balance(p)).isEqualByComparingTo(result.get(0) == 200 ? "2" : "4");
+    reconciles(p);
+    var before = balance(p).toPlainString();
+    result =
+        race(
+            () ->
+                request(
+                        "POST",
+                        path,
+                        Map.of("quantity", "0", "expectedQuantity", before, "reason", "실사1"),
+                        UUID.randomUUID(),
+                        admin,
+                        true)
+                    .getResponse()
+                    .getStatus(),
+            () ->
+                request(
+                        "POST",
+                        path,
+                        Map.of("quantity", "1", "expectedQuantity", before, "reason", "실사2"),
+                        UUID.randomUUID(),
+                        admin,
+                        true)
+                    .getResponse()
+                    .getStatus());
+    assertThat(result).containsExactlyInAnyOrder(200, 409);
+    reconciles(p);
+  }
+
+  @Test
+  void correctionFailureRollsBackKeyBalanceAndLedger() throws Exception {
+    UUID p = part("A", "3"), key = UUID.randomUUID();
+    db.execute(
+        "ALTER TABLE stock_movements ADD CONSTRAINT test_no_adjust CHECK (kind NOT IN"
+            + " ('ADJUST_IN','ADJUST_OUT'))");
+    try {
+      assertThat(
+              request(
+                      "POST",
+                      "/api/admin/parts/" + p + "/adjustments",
+                      Map.of("quantity", "0", "expectedQuantity", "3", "reason", "실사"),
+                      key,
+                      admin,
+                      true)
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(409);
+      assertThat(balance(p)).isEqualByComparingTo("3");
+      assertThat(
+              db.queryForObject(
+                  "SELECT COUNT(*) FROM stock_operations WHERE id=?", Integer.class, key))
+          .isZero();
+      reconciles(p);
+    } finally {
+      db.execute("ALTER TABLE stock_movements DROP CONSTRAINT test_no_adjust");
+    }
+  }
+
+  @Test
+  void archiveRenameRestoreKeepOriginalMovements() throws Exception {
+    UUID p = part("A", "1");
+    String path = "/api/admin/parts/" + p;
+    assertThat(
+            request("DELETE", path, Map.of("reason", "중복"), UUID.randomUUID(), admin, true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    ok(
+        "PATCH",
+        path,
+        Map.of(
+            "sku",
+            "A",
+            "name",
+            "수정된 이름",
+            "unit",
+            "L",
+            "minimumQuantity",
+            "0",
+            "unitPrice",
+            123,
+            "active",
+            true));
+    assertThat(
+            db.queryForObject(
+                "SELECT part_name FROM stock_movements WHERE part_id=?", String.class, p))
+        .isEqualTo("A");
+    ok(
+        "POST",
+        path + "/adjustments",
+        Map.of("quantity", "0", "expectedQuantity", "1", "reason", "오류 정정"));
+    UUID key = UUID.randomUUID();
+    for (int i = 0; i < 2; i++)
+      assertThat(
+              request("DELETE", path, Map.of("reason", "중복"), key, admin, true)
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(200);
+    var normal = mvc.perform(get("/api/admin/parts").with(user(admin).roles("ADMIN"))).andReturn();
+    assertThat(json.readTree(normal.getResponse().getContentAsString()).size()).isZero();
+    var all =
+        mvc.perform(get("/api/admin/parts?includeArchived=true").with(user(admin).roles("ADMIN")))
+            .andReturn();
+    assertThat(
+            json.readTree(all.getResponse().getContentAsString())
+                .get(0)
+                .get("archived")
+                .asBoolean())
+        .isTrue();
+    assertThat(count("stock_movements")).isEqualTo(2);
+    assertThat(count("part_events")).isEqualTo(1);
+    assertThat(
+            request(
+                    "POST",
+                    path + "/adjustments",
+                    Map.of("quantity", "1", "expectedQuantity", "0", "reason", "실사"),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    ok("POST", path + "/restore", Map.of("reason", "복원"));
+    assertThat(db.queryForObject("SELECT active FROM parts WHERE id=?", Boolean.class, p))
+        .isFalse();
+    assertThat(db.queryForObject("SELECT archived FROM parts WHERE id=?", Boolean.class, p))
+        .isFalse();
+    reconciles(p);
+  }
+
+  @Test
+  void physicalReturnRestoresArchivedPartButKeepsItInactive() throws Exception {
+    UUID w = running(), p = part("A", "1");
+    String original =
+        ok("POST", usePath(w), use(p, "1")).get("movements").get(0).get("id").asText();
+    ok("DELETE", "/api/admin/parts/" + p, Map.of("reason", "단종"));
+    ok(
+        "POST",
+        "/api/admin/work-orders/" + w + "/parts/return",
+        Map.of("originalUseId", original, "quantity", "0.5", "reason", "실물 회수"));
+    assertThat(balance(p)).isEqualByComparingTo("0.5");
+    assertThat(db.queryForObject("SELECT archived FROM parts WHERE id=?", Boolean.class, p))
+        .isFalse();
+    assertThat(db.queryForObject("SELECT active FROM parts WHERE id=?", Boolean.class, p))
+        .isFalse();
+    reconciles(p);
   }
 
   @Test
