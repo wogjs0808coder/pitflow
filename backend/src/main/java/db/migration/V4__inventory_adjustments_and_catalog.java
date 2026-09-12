@@ -12,7 +12,7 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 public class V4__inventory_adjustments_and_catalog extends BaseJavaMigration {
   @Override
   public Integer getChecksum() {
-    return 2026091301;
+    return 2026091302;
   }
 
   @Override
@@ -26,21 +26,34 @@ public class V4__inventory_adjustments_and_catalog extends BaseJavaMigration {
             + " created_at TIMESTAMP WITH TIME ZONE NOT NULL)");
     var checks =
         db.queryForList(
-            """
-            SELECT tc.constraint_name, cc.check_clause
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.check_constraints cc
-              ON tc.constraint_catalog=cc.constraint_catalog
-              AND tc.constraint_schema=cc.constraint_schema
-              AND tc.constraint_name=cc.constraint_name
-            WHERE LOWER(tc.table_name)='stock_movements' AND tc.table_schema=?
-              AND tc.constraint_type='CHECK'
-            """,
+            // PostgreSQL information_schema also exposes NOT NULL as CHECK. Use real table
+            // CHECKs and their referenced column instead, preserving kind's NOT NULL constraint.
+            connection.getMetaData().getDatabaseProductName().equals("PostgreSQL")
+                ? """
+SELECT c.conname AS constraint_name, pg_catalog.pg_get_constraintdef(c.oid) AS check_clause
+FROM pg_catalog.pg_constraint c
+JOIN pg_catalog.pg_class t ON t.oid=c.conrelid
+JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+JOIN pg_catalog.pg_attribute a ON a.attrelid=t.oid AND a.attnum=ANY(c.conkey)
+WHERE n.nspname=? AND t.relname='stock_movements'
+  AND c.contype='c' AND a.attname='kind'
+"""
+                : """
+                  SELECT tc.constraint_name, cc.check_clause
+                  FROM information_schema.table_constraints tc
+                  JOIN information_schema.check_constraints cc
+                    ON tc.constraint_catalog=cc.constraint_catalog
+                    AND tc.constraint_schema=cc.constraint_schema
+                    AND tc.constraint_name=cc.constraint_name
+                  WHERE LOWER(tc.table_name)='stock_movements' AND tc.table_schema=?
+                    AND tc.constraint_type='CHECK'
+                  """,
             connection.getSchema());
     var names =
         checks.stream()
             .filter(c -> c.get("check_clause").toString().toLowerCase(Locale.ROOT).contains("kind"))
             .map(c -> c.get("constraint_name").toString())
+            .distinct()
             .toList();
     if (names.size() != 2)
       throw new IllegalStateException("Expected V3 movement kind and link checks");

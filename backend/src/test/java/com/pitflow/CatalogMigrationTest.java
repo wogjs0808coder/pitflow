@@ -95,6 +95,25 @@ VALUES (?,?,?,'RECEIPT',5,5,'기존 이름','EA',999,?,'기존 입고',CURRENT_T
             .isEqualTo(1);
         assertThat(latest.migrate().migrationsExecuted).isZero();
         assertThat(
+                db.queryForObject(
+                    "SELECT is_nullable FROM information_schema.columns WHERE table_schema=? AND"
+                        + " table_name='stock_movements' AND column_name='kind'",
+                    String.class,
+                    schema))
+            .isEqualTo("NO");
+        assertThatThrownBy(
+                () -> db.update("UPDATE stock_movements SET kind=NULL WHERE id=?", movement))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(
+                () -> db.update("UPDATE stock_movements SET kind='INVALID' WHERE id=?", movement))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(
+                () -> db.update("UPDATE stock_movements SET kind='USE' WHERE id=?", movement))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(
+                () -> db.update("UPDATE stock_movements SET quantity=-1 WHERE id=?", movement))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(
                 db.queryForObject("SELECT quantity FROM parts WHERE id=?", BigDecimal.class, part))
             .isEqualByComparingTo("5");
       } finally {

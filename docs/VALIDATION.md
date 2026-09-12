@@ -71,3 +71,7 @@
 - 별도 스키마에서 V3를 적용하고 사용자 수정 데이터와 입고 이력을 만든 다음 V4를 적용했습니다. 기존 재고·정비 설정·이력 보존, 신규 부품 재고 0, 중복 초기화 방지를 확인했습니다.
 - Next.js 프로덕션 빌드와 타입 검사 통과. 날짜별 전체 예약과 방문 가능 안내를 표시하도록 변경했고 기존 예약 상태·시간 정책 테스트도 통과했습니다.
 - 실제 PostgreSQL CI, Windows Docker, 브라우저 클릭 검증은 미실행입니다. 추가 패치 적용 절차는 [PHASE3-FIXES.md](PHASE3-FIXES.md)에 있습니다.
+
+## V4 PostgreSQL 호환 수정 (2026-09-13, 한국 시간)
+
+사용자 PostgreSQL 17.11에서 V4 제약조건 조회 실패·롤백이 확인되었습니다. NOT NULL을 CHECK 개수에 포함한 원인을 수정했습니다. H2 44개 테스트 재통과, PostgreSQL 17.5 기반 PGlite에서 기존 오류 재현 및 수정 SQL·NOT NULL 보존을 검증했습니다. 네이티브 PostgreSQL 전체 회귀 검증용 compose.test.yaml과 복구 절차는 [V4-HOTFIX.md](V4-HOTFIX.md)에 추가했습니다.
