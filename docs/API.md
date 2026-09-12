@@ -1,5 +1,7 @@
 # API 명세 — Phase 1·2
 
+3단계 작업지시·부품 API 및 요청 키 계약은 [PHASE3.md](PHASE3.md)의 API 항목을 확인하세요.
+
 기본 주소: 프론트엔드 `http://localhost:3000/api`. 직접 API 검사는 `http://localhost:8081/api`.
 
 모든 변경 요청은 먼저 `GET /auth/csrf`를 호출하고 반환된 `headerName` 헤더에 `token`을 넣어야 합니다. 같은 세션 쿠키를 유지하세요.

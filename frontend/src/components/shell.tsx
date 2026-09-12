@@ -41,10 +41,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { href: "/vehicles", label: "내 차량", icon: CarFront },
     { href: "/services", label: "정비 항목", icon: Wrench },
     { href: "/appointments", label: "내 정비 예약", icon: CalendarDays },
+    { href: "/work-orders", label: "내 정비 작업", icon: Wrench },
   ];
   if (user.role === "ADMIN")
     links.push(
       { href: "/admin/appointments", label: "예약 캘린더", icon: CalendarDays },
+      { href: "/admin/work-orders", label: "정비 작업 관리", icon: Wrench },
+      { href: "/admin/parts", label: "부품·정비사 관리", icon: Settings2 },
       {
         href: "/admin/services",
         label: "정비 항목 관리",

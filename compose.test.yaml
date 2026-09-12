@@ -1,0 +1,27 @@
+name: pitflow-tests
+services:
+  test-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: pitflow_test
+      POSTGRES_USER: pitflow_test
+      POSTGRES_PASSWORD: local-test-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pitflow_test -d pitflow_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+  backend-tests:
+    build:
+      context: ./backend
+      target: build
+    command: ["mvn", "-B", "-ntp", "verify"]
+    environment:
+      TEST_DB_URL: jdbc:postgresql://test-db:5432/pitflow_test
+      TEST_DB_USERNAME: pitflow_test
+      TEST_DB_PASSWORD: local-test-only
+    depends_on:
+      test-db:
+        condition: service_healthy
