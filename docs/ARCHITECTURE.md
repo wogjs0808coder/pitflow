@@ -1,5 +1,7 @@
 # PitFlow 설계 (1·2단계)
 
+3단계 DB, 재고 잠금 순서, idempotency, 실물 반환 정책은 [PHASE3.md](PHASE3.md)를 따릅니다.
+
 ## 요청 구조
 브라우저 → Next.js `/api/*` rewrite → Spring Boot → PostgreSQL.
 

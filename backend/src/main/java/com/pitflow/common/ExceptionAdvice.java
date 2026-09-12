@@ -10,6 +10,15 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 public class ExceptionAdvice {
+  @ExceptionHandler({
+    org.springframework.dao.TransientDataAccessException.class,
+    org.springframework.transaction.TransactionTimedOutException.class
+  })
+  ResponseEntity<ApiError> retryable(Exception ex) {
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+        .body(new ApiError("다른 요청이 처리 중입니다. 같은 요청 키로 다시 확인해 주세요."));
+  }
+
   @ExceptionHandler(ApiException.class)
   ResponseEntity<ApiError> business(ApiException ex) {
     return ResponseEntity.status(ex.getStatus()).body(new ApiError(ex.getMessage()));

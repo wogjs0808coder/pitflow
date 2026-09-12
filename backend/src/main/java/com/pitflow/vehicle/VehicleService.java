@@ -49,7 +49,18 @@ public class VehicleService {
 
   @Transactional
   public VehicleView update(String email, UUID id, VehicleRequest request) {
-    var v = owned(email, id);
+    var v =
+        vehicles
+            .lockOwned(id, ownerId(email))
+            .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "차량을 찾을 수 없습니다."));
+    Integer recorded =
+        db.queryForObject(
+            "SELECT COALESCE(MAX(received_mileage),0) FROM work_orders WHERE vehicle_id=?",
+            Integer.class,
+            id);
+    if (request.mileage() < recorded) {
+      throw new ApiException(HttpStatus.CONFLICT, "정비 입고 기록보다 낮은 주행거리로 변경할 수 없습니다.");
+    }
     v.update(request);
     vehicles.flush();
     return VehicleView.from(v);
