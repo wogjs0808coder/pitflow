@@ -36,7 +36,7 @@ class BillingMigrationTest {
             db.queryForList(
                 "SELECT version,checksum FROM \"flyway_schema_history\" WHERE success=TRUE ORDER BY"
                     + " installed_rank");
-        var latest = Flyway.configure().dataSource(ds).defaultSchema(schema).load();
+        var latest = Flyway.configure().dataSource(ds).defaultSchema(schema).target("5").load();
         assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
         latest.validate();
         assertThat(db.queryForList("SELECT * FROM service_items ORDER BY id")).isEqualTo(catalog);

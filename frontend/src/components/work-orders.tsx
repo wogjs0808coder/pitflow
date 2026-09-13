@@ -147,7 +147,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
           <summary>예약 확인 및 입고 처리</summary>
           <p>
             날짜를 선택하면 대기·확정 예약도 표시됩니다. 예약 확정 → 방문 처리 →
-            입고 등록 순으로 진행하세요. 방문 처리는 예약 시작 30분 전부터 종료
+            입고 등록 순으로 진행하세요. 확정 예약은 예약일 전에도 방문 처리할 수 있으며 종료
             시각 전까지 가능합니다.
           </p>
           <label>
@@ -200,9 +200,8 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                         b.status === "CONFIRMED" &&
                         !b.allowedStatuses.includes("VISITED") && (
                           <p>
-                            아직 방문 처리 시간이 아니거나 예약 시간이
-                            지났습니다. 예약 시작 30분 전부터 종료 전까지 방문
-                            처리할 수 있습니다.
+                            예약 종료 시간이 지났습니다. 방문 처리 가능 상태를
+                            확인해 주세요.
                           </p>
                         )}
                       {!received && b.status === "VISITED" && (

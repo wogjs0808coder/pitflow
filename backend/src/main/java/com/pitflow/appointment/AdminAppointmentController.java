@@ -11,9 +11,21 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/admin")
 public class AdminAppointmentController {
   private final AppointmentService service;
+  private final BookingPolicy policy;
 
-  public AdminAppointmentController(AppointmentService service) {
+  public AdminAppointmentController(AppointmentService service, BookingPolicy policy) {
     this.service = service;
+    this.policy = policy;
+  }
+
+  @GetMapping("/booking-calendar")
+  public Object calendar() {
+    return policy.calendar();
+  }
+
+  @PutMapping("/booking-calendar")
+  public Object calendar(@Valid @RequestBody BookingPolicy.CalendarRequest request) {
+    return policy.saveCalendar(request);
   }
 
   @GetMapping("/work-bays")

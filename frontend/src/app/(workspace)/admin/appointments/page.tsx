@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
+import { BookingCalendarSettings } from "@/components/booking-calendar-settings";
 import { AppointmentCard } from "@/components/appointment-card";
 import { api, errorText } from "@/lib/api";
 import { Appointment, AppointmentStatus, WorkBay, BookingPolicy, addDays, seoulToday, dayLabel, timeLabel, statusLabel, actionLabel } from "@/lib/appointments";
@@ -57,6 +58,7 @@ export default function AdminAppointmentsPage() {
   }
   return <>
     <div className="page-heading"><div><span className="eyebrow">SERVICE SCHEDULE</span><h1>예약 캘린더</h1><p>작업 공간별 일정을 확인하고 예약 상태를 관리하세요.</p></div><CalendarDays size={32} /></div>
+    <BookingCalendarSettings onSaved={() => { setRevision(n => n + 1); setNotice("휴무 설정을 저장했습니다."); }} />
     <div className="booking-toolbar">
       <div className="calendar-date-controls"><button className="button secondary" aria-label="이전 날짜" disabled={busy} onClick={() => moveDate(addDays(date, -1))}><ChevronLeft size={18} /></button><label>조회 날짜<input type="date" value={date} disabled={busy} onChange={e => moveDate(e.target.value)} /></label><button className="button secondary" aria-label="다음 날짜" disabled={busy} onClick={() => moveDate(addDays(date, 1))}><ChevronRight size={18} /></button></div>
       <div className="calendar-date-controls"><button className="button secondary" disabled={busy} onClick={() => moveDate(seoulToday())}>오늘</button><button className="button secondary" disabled={loading || busy} onClick={() => setRevision(n => n + 1)}><RefreshCw size={16} />새로고침</button></div>
@@ -81,7 +83,7 @@ export default function AdminAppointmentsPage() {
         <aside className="calendar-detail" aria-label="선택한 예약 상세">
           {selected ? <><h2>예약 상세</h2><p><strong>{selected.customerName}</strong><br /><span className="muted customer-email">{selected.customerEmail}</span></p><AppointmentCard appointment={selected}>
             <div className="booking-state-actions">{selected.allowedStatuses.map(s => <button key={s} className={`button ${s === "CANCELLED" ? "secondary danger" : "primary"}`} disabled={busy || !!error} onClick={() => void change(s)}>{busy ? "처리 중…" : actionLabel[s]}</button>)}</div>
-            <p className="booking-caption">방문 처리는 확정 예약의 시작 30분 전부터 종료 전까지, 미방문 처리는 종료 후에 가능합니다.</p>
+            <p className="booking-caption">확정 예약은 예약일 전에도 방문 처리할 수 있습니다. 실제 도착한 고객만 처리하세요. 예약 종료 이후에는 미방문 처리가 가능합니다.</p>
           </AppointmentCard></> : <div className="empty-state"><h2>선택한 예약이 없습니다</h2><p>시간표의 예약을 선택하면 상세 내용이 표시됩니다.</p></div>}
         </aside>
       </div>

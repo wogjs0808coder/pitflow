@@ -79,6 +79,8 @@ class PhaseTwoIntegrationTest {
 
   @BeforeEach
   void setup() {
+    db.update("DELETE FROM booking_day_overrides");
+    db.update("UPDATE booking_calendar SET revision=0,closed_days=NULL WHERE id=1");
     clock.set(Instant.parse("2026-09-14T00:00:00Z"));
     clear();
     vehicles.deleteAll();
@@ -378,7 +380,7 @@ class PhaseTwoIntegrationTest {
     change(id, "NO_SHOW").andExpect(status().isConflict());
     change(id, "CONFIRMED").andExpect(status().isOk());
     change(id, "CONFIRMED").andExpect(status().isOk());
-    change(id, "VISITED").andExpect(status().isConflict());
+    change(id, "VISITED").andExpect(status().isOk());
     clock.set(START.toInstant());
     mvc.perform(
             post("/api/appointments/" + id + "/cancel")
@@ -438,6 +440,86 @@ class PhaseTwoIntegrationTest {
     assertThat(results.get(1)).isEqualTo(200);
     assertThat(bookings.detail("owner@example.com", id).status()).isEqualTo(Status.CANCELLED);
     assertThat(count("slot_allocations")).isZero();
+  }
+
+  @Test
+  void calendarOverridesPreserveExistingBookingsAndRequireAdminCsrfAndRevision() throws Exception {
+    UUID existing = book(oil);
+    String body =
+        json.writeValueAsString(
+            Map.of(
+                "revision",
+                0,
+                "closedDays",
+                List.of("TUESDAY", "SUNDAY"),
+                "overrides",
+                Map.of("2026-09-20", false)));
+    String path = "/api/admin/booking-calendar";
+    mvc.perform(
+            put(path)
+                .with(user("owner@example.com"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            put(path)
+                .with(user("admin@example.com").roles("ADMIN"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            put(path)
+                .with(user("admin@example.com").roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isOk());
+    mvc.perform(
+            put(path)
+                .with(user("admin@example.com").roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isConflict());
+    assertThat(bookings.detail("owner@example.com", existing).status()).isEqualTo(Status.PENDING);
+    createAs("other@example.com", request(otherCar, BAY2, START, oil))
+        .andExpect(status().isBadRequest());
+    assertThat(
+            bookings
+                .availability("owner@example.com", car, START.toLocalDate(), List.of(oil))
+                .closed())
+        .isTrue();
+    createAs("other@example.com", request(otherCar, BAY2, START.plusDays(5), oil))
+        .andExpect(status().isCreated());
+    mvc.perform(get(path).with(user("admin@example.com").roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.revision").value(1));
+  }
+
+  @Test
+  void concurrentCalendarEditsCannotOverwriteEachOther() throws Exception {
+    String path = "/api/admin/booking-calendar";
+    Callable<Integer> edit =
+        () ->
+            mvc.perform(
+                    put(path)
+                        .with(user("admin@example.com").roles("ADMIN"))
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            json.writeValueAsString(
+                                Map.of(
+                                    "revision",
+                                    0,
+                                    "closedDays",
+                                    List.of(),
+                                    "overrides",
+                                    Map.of("2026-09-16", true)))))
+                .andReturn()
+                .getResponse()
+                .getStatus();
+    assertThat(race(edit, edit)).containsExactlyInAnyOrder(200, 409);
   }
 
   private List<Integer> race(Callable<Integer> first, Callable<Integer> second) throws Exception {

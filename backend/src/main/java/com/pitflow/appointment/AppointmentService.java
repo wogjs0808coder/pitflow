@@ -101,6 +101,7 @@ public class AppointmentService {
 
   @Transactional
   public View create(String email, CreateRequest request) {
+    policy.lockCalendar();
     UUID customer = customer(email);
     // Serialize reservations and deletion for this car. Different customers can still book
     // concurrently.
@@ -195,10 +196,8 @@ public class AppointmentService {
     List<Status> result = new ArrayList<>();
     if (pending && now.isBefore(row.endsAt().toInstant())) result.add(Status.CONFIRMED);
     result.add(Status.CANCELLED);
-    // Check-in is allowed from 30 minutes before the reservation until its end.
-    if (confirmed
-        && !now.isBefore(row.startsAt().toInstant().minus(30, ChronoUnit.MINUTES))
-        && now.isBefore(row.endsAt().toInstant())) result.add(Status.VISITED);
+    // Confirmed customers may arrive on an earlier date; preserve the original reservation.
+    if (confirmed && now.isBefore(row.endsAt().toInstant())) result.add(Status.VISITED);
     if (!now.isBefore(row.endsAt().toInstant())) result.add(Status.NO_SHOW);
     return List.copyOf(result);
   }
