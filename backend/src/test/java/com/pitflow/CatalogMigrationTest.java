@@ -57,7 +57,7 @@ VALUES (?,?,?,'RECEIPT',5,5,'기존 이름','EA',999,?,'기존 입고',CURRENT_T
             operation,
             part,
             actor);
-        var latest = Flyway.configure().dataSource(ds).defaultSchema(schema).load();
+        var latest = Flyway.configure().dataSource(ds).defaultSchema(schema).target("4").load();
         assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
         assertThat(db.queryForObject("SELECT COUNT(*) FROM service_items", Integer.class))
             .isEqualTo(18);

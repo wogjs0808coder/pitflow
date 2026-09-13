@@ -97,7 +97,7 @@ export default function NewAppointmentPage() {
             <div className="service-options">{setup.services.map(s => <label className={`service-option ${serviceIds.includes(s.id) ? "is-selected" : ""}`} key={s.id}><input type="checkbox" checked={serviceIds.includes(s.id)} onChange={() => toggleService(s.id)} /><span><strong>{s.name}</strong><small>{s.durationMinutes}분 · 공임 {won(s.laborPrice)}</small></span></label>)}</div>
           </fieldset>
           <fieldset className="booking-panel" disabled={busy}><legend><span className="step-number">2</span>방문 날짜와 시간</legend>
-            <p className="booking-caption">{setup.policy.opensAt.slice(0, 5)}~{setup.policy.closesAt.slice(0, 5)} · {setup.policy.closedDays.map(d => dayNames[d]).join("·")}요일 휴무 · 한국 시간</p>
+            <p className="booking-caption">{setup.policy.opensAt.slice(0, 5)}~{setup.policy.closesAt.slice(0, 5)} · {setup.policy.closedDays.map(d => dayNames[d]).join("·")}요일 정기 휴무 · 날짜별 예외는 조회 결과에 반영됩니다 · 한국 시간</p>
             <label className="booking-field">방문 날짜<input type="date" required min={setup.policy.earliestDate} max={setup.policy.latestDate} value={date} onChange={e => { invalidate(); setDate(e.target.value); }} /></label>
             {feedback && <div className="notice" role="status">{feedback}</div>}
             {error && <div className="error" role="alert">{error} <Link className="inline-link" href="/appointments">내 예약 확인</Link> <button className="text-button" type="button" onClick={() => setRevision(n => n + 1)}>시간 다시 조회</button></div>}

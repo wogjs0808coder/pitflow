@@ -158,6 +158,12 @@ public class WorkService {
     }
   }
 
+  // Billing uses the same durable command reservation and transaction boundary as stock changes.
+  public Map<String, Object> billingCommand(
+      String email, UUID key, String scope, Object body, Supplier<Map<String, Object>> action) {
+    return command(email, key, "billing/" + scope, body, action);
+  }
+
   public List<Map<String, Object>> mechanics() {
     return rows("SELECT * FROM mechanics ORDER BY code");
   }
@@ -436,12 +442,31 @@ public class WorkService {
           if (target.equals("CANCELLED") && (r.reason() == null || r.reason().isBlank()))
             throw bad("취소 사유를 입력해 주세요.");
           db.update("UPDATE work_orders SET status=? WHERE id=?", target, work);
+          if (target.equals("COMPLETED"))
+            db.update("UPDATE work_orders SET completed_at=? WHERE id=?", now(), work);
           event(
               work,
               actor(email, true),
               "STATUS",
               current + " → " + target + (r.reason() == null ? "" : " · " + r.reason().strip()));
           // Cancellation never invents a physical return. Existing USE rows remain intact.
+          return detail(email, work, true);
+        });
+  }
+
+  public Map<String, Object> release(String email, UUID key, UUID work) {
+    return command(
+        email,
+        key,
+        "release/" + work,
+        Map.of(),
+        () -> {
+          var order = lockWork(work);
+          if (!"COMPLETED".equals(order.get("status"))) throw conflict("정비 완료 후 출고 처리해 주세요.");
+          if (order.get("released_at") == null) {
+            db.update("UPDATE work_orders SET released_at=? WHERE id=?", now(), work);
+            event(work, actor(email, true), "RELEASED", "차량 출고 완료");
+          }
           return detail(email, work, true);
         });
   }

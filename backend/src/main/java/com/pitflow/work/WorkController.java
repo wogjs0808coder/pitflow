@@ -121,6 +121,12 @@ public class WorkController {
     return s.state(p.getName(), key, id, r);
   }
 
+  @PostMapping("/work-orders/{id}/release")
+  public Object release(
+      Principal p, @RequestHeader("Idempotency-Key") UUID key, @PathVariable UUID id) {
+    return s.release(p.getName(), key, id);
+  }
+
   @PatchMapping("/work-orders/{id}/assignment")
   public Object assignment(
       Principal p,

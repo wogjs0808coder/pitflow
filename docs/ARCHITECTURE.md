@@ -58,3 +58,7 @@
 ## 실행 주소
 
 전체 Docker: 브라우저 → localhost:3000 → backend:8080 → db:5432. 백엔드 직접 검사용 호스트 포트는 8081이며 DB는 미공개입니다. VSCode 개별 실행 시 compose.dev.yaml로 DB만 localhost:5433에 공개하고 API를 localhost:8081에서 실행합니다.
+
+## 정산·수납
+
+4단계 V5 구조, 스냅샷·수납 원장·잠금·재발행 정책과 API는 [PHASE4.md](PHASE4.md)를 따릅니다.
