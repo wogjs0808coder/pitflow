@@ -158,6 +158,12 @@ public class WorkService {
     }
   }
 
+  // Billing uses the same durable command reservation and transaction boundary as stock changes.
+  public Map<String, Object> billingCommand(
+      String email, UUID key, String scope, Object body, Supplier<Map<String, Object>> action) {
+    return command(email, key, "billing/" + scope, body, action);
+  }
+
   public List<Map<String, Object>> mechanics() {
     return rows("SELECT * FROM mechanics ORDER BY code");
   }
@@ -436,6 +442,8 @@ public class WorkService {
           if (target.equals("CANCELLED") && (r.reason() == null || r.reason().isBlank()))
             throw bad("취소 사유를 입력해 주세요.");
           db.update("UPDATE work_orders SET status=? WHERE id=?", target, work);
+          if (target.equals("COMPLETED"))
+            db.update("UPDATE work_orders SET completed_at=? WHERE id=?", now(), work);
           event(
               work,
               actor(email, true),

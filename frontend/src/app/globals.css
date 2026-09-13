@@ -565,6 +565,87 @@ footer {
   border-radius: 0 8px 8px 0;
   font-size: 0.875rem;
 }
+.billing-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+}
+.billing-period label {
+  display: grid;
+  gap: 7px;
+  min-width: 180px;
+}
+.billing-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+.billing-metrics > div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f4f7f5;
+}
+.billing-metrics span,
+.billing-metrics strong {
+  display: block;
+}
+.billing-metrics span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.billing-metrics strong {
+  font-size: 1.15rem;
+}
+.billing-lines {
+  padding: 0;
+  margin: 16px 0;
+  list-style: none;
+}
+.billing-lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.billing-total {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 2px solid var(--ink);
+  font-size: 1.1rem;
+}
+.history-filter {
+  padding: 18px;
+  margin-bottom: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+}
+.history-filter label {
+  display: grid;
+  gap: 7px;
+  max-width: 440px;
+}
+.history-invoice {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+}
+.history-invoice:hover {
+  border-color: #97b3a4;
+  background: #fbfdfc;
+}
 .empty-state {
   border: 1px dashed #cad4da;
   border-radius: var(--radius);
@@ -915,6 +996,16 @@ textarea {
   }
   .form-panel {
     padding: 20px;
+  }
+  .billing-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .billing-period {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .billing-period .button {
+    width: 100%;
   }
   .catalog-meta {
     flex-wrap: wrap;

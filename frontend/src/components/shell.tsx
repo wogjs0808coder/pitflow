@@ -42,6 +42,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { href: "/services", label: "정비 항목", icon: Wrench },
     { href: "/appointments", label: "내 정비 예약", icon: CalendarDays },
     { href: "/work-orders", label: "내 정비 작업", icon: Wrench },
+    { href: "/history", label: "정비 이력·수납", icon: Settings2 },
   ];
   if (user.role === "ADMIN")
     links.push(
@@ -53,6 +54,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         label: "정비 항목 관리",
         icon: Settings2,
       },
+      { href: "/admin/billing", label: "정산·수납 관리", icon: Settings2 },
     );
   return (
     <div className="app-shell">
