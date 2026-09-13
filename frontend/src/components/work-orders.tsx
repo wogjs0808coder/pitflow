@@ -18,6 +18,8 @@ import { useWorkCommand } from "./work-command";
 
 export function WorkOrders({ admin = false }: { admin?: boolean }) {
   const { user } = useAuth();
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("active");
   const [orders, setOrders] = useState<Work[]>([]);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [parts, setParts] = useState<Part[]>([]);
@@ -110,6 +112,28 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
         {admin ? "관리자만 이용할 수 있습니다." : "로그인이 필요합니다."}
       </p>
     );
+  const category = (w: Work) =>
+    w.released_at
+      ? "released"
+      : w.status === "COMPLETED"
+        ? "completed"
+        : w.status === "CANCELLED"
+          ? "cancelled"
+          : "active";
+  const stages = [
+    ["active", "진행 중"],
+    ["completed", "정비 완료·출고 대기"],
+    ["released", "출고 완료"],
+    ["cancelled", "취소"],
+    ["all", "전체"],
+  ];
+  const shown = orders.filter(
+    (w) =>
+      (filter === "all" || category(w) === filter) &&
+      `${w.plate_number} ${w.vehicle_label} ${w.mechanic_name}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
   const disabled = command.blocked || loading || !!error;
   const eligible = bookings.filter(
     (b) =>
@@ -147,8 +171,8 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
           <summary>예약 확인 및 입고 처리</summary>
           <p>
             날짜를 선택하면 대기·확정 예약도 표시됩니다. 예약 확정 → 방문 처리 →
-            입고 등록 순으로 진행하세요. 확정 예약은 예약일 전에도 방문 처리할 수 있으며 종료
-            시각 전까지 가능합니다.
+            입고 등록 순으로 진행하세요. 확정 예약은 예약일 전에도 방문 처리할
+            수 있으며 종료 시각 전까지 가능합니다.
           </p>
           <label>
             예약 날짜
@@ -324,12 +348,39 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
           )}
         </details>
       )}
+      <div className="management-toolbar">
+        <div className="management-tabs" aria-label="작업 상태 필터">
+          {stages.map(([key, label]) => (
+            <button
+              className={filter === key ? "button primary" : "button secondary"}
+              key={key}
+              aria-pressed={filter === key}
+              onClick={() => setFilter(key)}
+            >
+              {label} ·{" "}
+              {
+                orders.filter((w) => key === "all" || category(w) === key)
+                  .length
+              }
+            </button>
+          ))}
+        </div>
+        <label>
+          작업 검색
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="차량번호, 차종, 담당 정비사"
+          />
+        </label>
+      </div>
       {loading ? (
         <p role="status">작업 목록을 불러오는 중입니다…</p>
       ) : (
         <div className="work-layout">
-          <section aria-label="작업 목록" className="work-list">
-            {orders.map((w) => (
+          <section aria-label="작업 목록" className="work-list management-list">
+            {shown.map((w) => (
               <button
                 key={w.id}
                 disabled={command.busy}
@@ -337,7 +388,14 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                 className={`work-panel work-select ${selected === w.id ? "selected-work" : ""}`}
                 onClick={() => setSelected(w.id)}
               >
-                <span className="eyebrow">{workLabel[w.status]}</span>
+                <span className={`work-stage stage-${category(w)}`}>
+                  {w.released_at
+                    ? "출고 완료"
+                    : w.status === "COMPLETED"
+                      ? "정비 완료 · 출고 대기"
+                      : workLabel[w.status]}
+                </span>
+                {w.released_at && <span>출고 {localTime(w.released_at)}</span>}
                 <strong>
                   {w.vehicle_label} · {w.plate_number}
                 </strong>
@@ -348,7 +406,12 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                 <span>담당 {w.mechanic_name}</span>
               </button>
             ))}
-            {!orders.length && !error && <p>등록된 정비 작업이 없습니다.</p>}
+            {!shown.length && !error && (
+              <p className="empty-state">
+                선택한 조건의 작업이 없습니다. 다른 상태나 전체 목록을
+                확인하세요.
+              </p>
+            )}
           </section>
           <section aria-label="작업 상세">
             {detail ? (
@@ -361,6 +424,52 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                   {detail.mechanic_name}
                 </p>
                 <p className="booking-notes">{detail.notes}</p>
+                {detail.released_at ? (
+                  <div className="notice">
+                    <strong>출고 완료</strong> · {localTime(detail.released_at)}
+                  </div>
+                ) : (
+                  detail.status === "COMPLETED" && (
+                    <div className="info-note">
+                      <strong>정비 완료 · 출고 대기</strong>
+                      <p>
+                        차량 인도를 확인한 후 출고 처리하세요. 수납은 정산
+                        화면에서 별도로 확인합니다.
+                      </p>
+                      {admin && (
+                        <>
+                          <Link
+                            className="button secondary"
+                            href="/admin/billing"
+                          >
+                            정산·수납 확인
+                          </Link>{" "}
+                          <button
+                            className="button primary"
+                            disabled={disabled}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "차량을 고객에게 인도했습니까? 출고 완료 시각을 기록합니다.",
+                                )
+                              )
+                                void command.run(
+                                  `${base}/${detail.id}/release`,
+                                  {},
+                                );
+                            }}
+                          >
+                            출고 완료 처리
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )
+                )}
+                <p className="muted">
+                  정비 항목 {detail.items.filter((i) => i.done).length} /{" "}
+                  {detail.items.length} 완료
+                </p>
                 <h3>정비 항목</h3>
                 <ul className="work-items">
                   {detail.items.map((i) => (

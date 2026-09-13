@@ -68,6 +68,7 @@ export type Work = {
   status: WorkStatus;
   notes: string;
   received_at: string;
+  released_at: string | null;
 };
 export type WorkDetail = Work & {
   items: { id: string; name: string; labor_price: number; done: boolean }[];

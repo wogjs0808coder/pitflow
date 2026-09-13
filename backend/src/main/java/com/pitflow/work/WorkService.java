@@ -454,6 +454,23 @@ public class WorkService {
         });
   }
 
+  public Map<String, Object> release(String email, UUID key, UUID work) {
+    return command(
+        email,
+        key,
+        "release/" + work,
+        Map.of(),
+        () -> {
+          var order = lockWork(work);
+          if (!"COMPLETED".equals(order.get("status"))) throw conflict("정비 완료 후 출고 처리해 주세요.");
+          if (order.get("released_at") == null) {
+            db.update("UPDATE work_orders SET released_at=? WHERE id=?", now(), work);
+            event(work, actor(email, true), "RELEASED", "차량 출고 완료");
+          }
+          return detail(email, work, true);
+        });
+  }
+
   public Map<String, Object> assignment(String email, UUID key, UUID work, Assignment r) {
     return command(
         email,

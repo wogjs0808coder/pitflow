@@ -204,6 +204,53 @@ class PhaseThreeIntegrationTest {
   }
 
   @Test
+  void releaseRequiresCompletionAndPreservesOneEventUnderConcurrentRequests() throws Exception {
+    UUID w = running();
+    String path = "/api/admin/work-orders/" + w + "/release";
+    assertThat(
+            request("POST", path, Map.of(), UUID.randomUUID(), admin, true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    UUID item =
+        db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, w);
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + w + "/status", Map.of("status", "COMPLETED"));
+    assertThat(
+            request("POST", path, Map.of(), UUID.randomUUID(), "work-customer@example.com", true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    assertThat(
+            request("POST", path, Map.of(), UUID.randomUUID(), admin, false)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    UUID key = UUID.randomUUID();
+    assertThat(
+            race(
+                () -> request("POST", path, Map.of(), key, admin, true).getResponse().getStatus(),
+                () ->
+                    request("POST", path, Map.of(), UUID.randomUUID(), admin, true)
+                        .getResponse()
+                        .getStatus()))
+        .containsExactly(200, 200);
+    assertThat(request("POST", path, Map.of(), key, admin, true).getResponse().getStatus())
+        .isEqualTo(200);
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM work_orders WHERE released_at IS NOT NULL", Integer.class))
+        .isEqualTo(1);
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM work_order_events WHERE event_type='RELEASED'",
+                Integer.class))
+        .isEqualTo(1);
+    assertThat(db.queryForObject("SELECT status FROM work_orders WHERE id=?", String.class, w))
+        .isEqualTo("COMPLETED");
+  }
+
+  @Test
   void correctionIsFractionalIdempotentValidatedAndAudited() throws Exception {
     UUID p = part("A", "4.5"), key = UUID.randomUUID();
     String path = "/api/admin/parts/" + p + "/adjustments";
