@@ -81,16 +81,18 @@ export default function PartsPage() {
     e.preventDefault();
     return new FormData(e.currentTarget);
   };
-    const shown = parts.filter(
-      (p) =>
-        `${p.name} ${p.sku}`.toLowerCase().includes(query.toLowerCase()) &&
-        (stockFilter === "all" ||
-          (stockFilter === "low"
-            ? p.active &&
-              !p.archived &&
-              milli(p.quantity) <= milli(p.minimum_quantity)
-            : !p.active && !p.archived)),
-    );
+  const shown = parts.filter(
+    (p) =>
+      `${p.name} ${p.sku} ${p.description}`
+        .toLowerCase()
+        .includes(query.toLowerCase()) &&
+      (stockFilter === "all" ||
+        (stockFilter === "low"
+          ? p.active &&
+            !p.archived &&
+            milli(p.quantity) <= milli(p.minimum_quantity)
+          : !p.active && !p.archived)),
+  );
   const chosen = parts.find((p) => p.id === selected);
   return (
     <>
@@ -178,6 +180,7 @@ export default function PartsPage() {
               void command.run("/api/admin/parts", {
                 sku: f.get("sku"),
                 name: f.get("name"),
+                description: f.get("description"),
                 unit: f.get("unit"),
                 minimumQuantity: f.get("minimum"),
                 unitPrice: f.get("price"),
@@ -193,6 +196,16 @@ export default function PartsPage() {
               <label>
                 부품명
                 <input name="name" required maxLength={120} />
+              </label>
+              <label>
+                부품 설명
+                <textarea
+                  name="description"
+                  maxLength={600}
+                  rows={4}
+                  placeholder="용도, 규격 확인 사항, 보관 메모 등을 입력하세요."
+                />
+                <span className="field-help">일반 텍스트로 최대 600자</span>
               </label>
               <label>
                 단위
@@ -251,6 +264,11 @@ export default function PartsPage() {
                     {p.archived ? "삭제됨" : p.active ? "사용 가능" : "비활성"}
                   </span>
                   <strong>{p.name}</strong>
+                  {p.description && (
+                    <span className="part-description part-description-list">
+                      {p.description}
+                    </span>
+                  )}
                   <span>
                     재고 {String(p.quantity)} {p.unit} · {won(p.unit_price)}/
                     {p.unit}
@@ -274,6 +292,12 @@ export default function PartsPage() {
                   <p>
                     재고 {String(chosen.quantity)} {chosen.unit}
                   </p>
+                  <div className="part-description-box">
+                    <span className="small-label">부품 설명</span>
+                    <p className="part-description">
+                      {chosen.description || "등록된 설명이 없습니다."}
+                    </p>
+                  </div>
                   {chosen.archived ? (
                     <div className="notice">
                       <p>
@@ -398,6 +422,7 @@ export default function PartsPage() {
                           {
                             sku: f.get("sku"),
                             name: f.get("name"),
+                            description: f.get("description"),
                             unit: chosen.unit,
                             minimumQuantity: f.get("minimum"),
                             unitPrice: f.get("price"),
@@ -425,6 +450,19 @@ export default function PartsPage() {
                             required
                             maxLength={120}
                           />
+                        </label>
+                        <label>
+                          부품 설명
+                          <textarea
+                            name="description"
+                            defaultValue={chosen.description}
+                            maxLength={600}
+                            rows={5}
+                            placeholder="설명을 비우면 미등록 상태로 저장됩니다."
+                          />
+                          <span className="field-help">
+                            용도와 확인 사항을 일반 텍스트로 입력하세요. 최대 600자
+                          </span>
                         </label>
                         <label>
                           안전재고

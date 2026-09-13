@@ -2,7 +2,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Wrench, ArrowRight, ShieldCheck } from "lucide-react";
+import {
+  Wrench,
+  ArrowRight,
+  ShieldCheck,
+  CalendarDays,
+  ClipboardCheck,
+  CarFront,
+} from "lucide-react";
 import { api, errorText, User } from "@/lib/api";
 import { useAuth } from "./auth-provider";
 export function AuthForm({ register = false }: { register?: boolean }) {
@@ -54,20 +61,23 @@ export function AuthForm({ register = false }: { register?: boolean }) {
           PitFlow.
         </Link>
         <div>
-          <span className="eyebrow">YOUR CAR, WELL CARED FOR.</span>
+          <span className="eyebrow">PITFLOW VEHICLE SERVICE</span>
           <h1>
-            내 차를 위한
-            <br />더 편한 관리.
+            내 차 정비,
+            <br />예약부터 이력까지.
           </h1>
-          <p>
-            차량 정보를 등록하고
-            <br />
-            필요한 정비 항목을 확인하세요.
-          </p>
-          <div className="auth-rule" />
-          <span className="small-label">
-            차량 정보 · 정비 항목 · 나만의 차고
-          </span>
+          <p>정비 예약과 작업 진행 상황을 한곳에서 확인하세요.</p>
+          <div className="auth-service-list" aria-label="제공 기능">
+            <span>
+              <CalendarDays size={18} /> 정비 예약 관리
+            </span>
+            <span>
+              <ClipboardCheck size={18} /> 작업·출고 상태 확인
+            </span>
+            <span>
+              <CarFront size={18} /> 차량별 정비 이력
+            </span>
+          </div>
         </div>
         <span className="auth-bottom">
           <ShieldCheck size={18} /> 내 차량 정보는 내 계정에서만
@@ -75,12 +85,12 @@ export function AuthForm({ register = false }: { register?: boolean }) {
       </section>
       <section className="auth-main">
         <div className="auth-card">
-          <span className="eyebrow">PITFLOW ACCOUNT</span>
-          <h2>{register ? "계정 만들기" : "다시 오셨네요"}</h2>
+          <span className="eyebrow">고객 서비스</span>
+          <h2>{register ? "차량 관리 시작하기" : "PitFlow 로그인"}</h2>
           <p className="muted">
             {register
               ? "차량 관리를 시작할 계정을 만들어 주세요."
-              : "로그인하고 내 차량을 확인하세요."}
+              : "예약 내역과 차량 정비 상태를 확인하세요."}
           </p>
           <form onSubmit={submit} className="stack-form">
             {register && (

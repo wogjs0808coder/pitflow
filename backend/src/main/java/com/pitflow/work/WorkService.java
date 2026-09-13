@@ -221,11 +221,13 @@ public class WorkService {
           UUID value = existing == null ? UUID.randomUUID() : existing;
           if (existing == null)
             db.update(
-                "INSERT INTO parts (id,sku,name,unit,minimum_quantity,unit_price,active) VALUES"
-                    + " (?,?,?,?,?,?,?)",
+                "INSERT INTO parts"
+                    + " (id,sku,name,description,unit,minimum_quantity,unit_price,active) VALUES"
+                    + " (?,?,?,?,?,?,?,?)",
                 value,
                 r.sku().strip(),
                 r.name().strip(),
+                description(r.description()),
                 r.unit().name(),
                 r.minimumQuantity(),
                 r.unitPrice(),
@@ -236,9 +238,12 @@ public class WorkService {
             if (!r.unit().name().equals(before.get("unit")))
               throw conflict("등록 후 단위는 변경할 수 없습니다. 새 부품으로 등록해 주세요.");
             db.update(
-                "UPDATE parts SET sku=?,name=?,minimum_quantity=?,unit_price=?,active=? WHERE id=?",
+                "UPDATE parts SET"
+                    + " sku=?,name=?,description=?,minimum_quantity=?,unit_price=?,active=? WHERE"
+                    + " id=?",
                 r.sku().strip(),
                 r.name().strip(),
+                description(r.description()),
                 r.minimumQuantity(),
                 r.unitPrice(),
                 r.active(),
@@ -246,6 +251,10 @@ public class WorkService {
           }
           return clean(one("SELECT * FROM parts WHERE id=?", value));
         });
+  }
+
+  private static String description(String value) {
+    return value == null ? "" : value.replace("\r\n", "\n").replace('\r', '\n').strip();
   }
 
   private Map<String, Object> lockPart(UUID part) {
