@@ -27,7 +27,8 @@ public final class AppointmentModels {
 
   public record Bay(UUID id, String name) {}
 
-  public record Item(UUID serviceId, String name, BigDecimal laborPrice, int durationMinutes) {}
+  public record Item(
+      UUID serviceId, String name, BigDecimal laborPrice, int durationMinutes, int quantity) {}
 
   public record Slot(OffsetDateTime startsAt, OffsetDateTime endsAt, List<Bay> availableBays) {}
 

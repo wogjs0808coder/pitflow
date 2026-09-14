@@ -58,7 +58,8 @@ public class AppointmentService {
     }
     var items = repository.catalog(ids);
     if (items.size() != ids.size()) throw bad("선택한 정비 항목이 없거나 더 이상 예약할 수 없습니다. 다시 선택해 주세요.");
-    int duration = items.stream().mapToInt(Item::durationMinutes).sum();
+    int duration =
+        items.stream().mapToInt(item -> item.durationMinutes() * item.quantity()).sum();
     if (duration > 480) throw bad("한 번에 예약할 수 있는 정비 시간은 최대 480분입니다.");
     return items;
   }
@@ -68,8 +69,12 @@ public class AppointmentService {
     car(vehicleId, customer(email), false);
     policy.checkDate(date);
     var items = selection(serviceIds);
-    int duration = items.stream().mapToInt(Item::durationMinutes).sum();
-    var total = items.stream().map(Item::laborPrice).reduce(BigDecimal.ZERO, BigDecimal::add);
+    int duration =
+        items.stream().mapToInt(item -> item.durationMinutes() * item.quantity()).sum();
+    var total =
+        items.stream()
+            .map(item -> item.laborPrice().multiply(BigDecimal.valueOf(item.quantity())))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
     List<Slot> slots = new ArrayList<>();
     if (!policy.closed(date)) {
       var bays = repository.bays();
@@ -111,7 +116,9 @@ public class AppointmentService {
       throw bad("예약 가능한 작업 공간을 선택해 주세요.");
     }
     var start =
-        policy.checkStart(request.startsAt(), items.stream().mapToInt(Item::durationMinutes).sum());
+        policy.checkStart(
+            request.startsAt(),
+            items.stream().mapToInt(item -> item.durationMinutes() * item.quantity()).sum());
     UUID id = UUID.randomUUID();
     try {
       repository.insert(

@@ -42,8 +42,8 @@ public class AppointmentRepository {
   List<Item> catalog(List<UUID> ids) {
     String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
     return db.query(
-        "SELECT id AS service_item_id, name, labor_price, duration_minutes FROM service_items "
-            + "WHERE active = TRUE AND id IN ("
+        "SELECT id AS service_item_id, name, labor_price, duration_minutes, 1 AS quantity FROM"
+            + " service_items WHERE active = TRUE AND id IN ("
             + placeholders
             + ") ORDER BY id",
         AppointmentRepository::item,
@@ -72,10 +72,11 @@ public class AppointmentRepository {
       List<Item> items,
       String notes,
       Instant now) {
-    int minutes = items.stream().mapToInt(Item::durationMinutes).sum();
+    int minutes =
+        items.stream().mapToInt(item -> item.durationMinutes() * item.quantity()).sum();
     var total =
         items.stream()
-            .map(Item::laborPrice)
+            .map(item -> item.laborPrice().multiply(java.math.BigDecimal.valueOf(item.quantity())))
             .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     var timestamp = now.atOffset(ZoneOffset.UTC);
     db.update(
@@ -100,12 +101,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
     for (Item item : items) {
       db.update(
           "INSERT INTO appointment_items (appointment_id, service_item_id, name, labor_price,"
-              + " duration_minutes) VALUES (?, ?, ?, ?, ?)",
+              + " duration_minutes, quantity) VALUES (?, ?, ?, ?, ?, ?)",
           id,
           item.serviceId(),
           item.name(),
           item.laborPrice(),
-          item.durationMinutes());
+          item.durationMinutes(),
+          item.quantity());
     }
     // Insert in chronological order. A later conflicting slot rolls back the entire reservation.
     for (int minute = 0; minute < minutes; minute += BookingPolicy.SLOT_MINUTES) {
@@ -190,7 +192,8 @@ FROM appointments a JOIN work_bays b ON b.id = a.work_bay_id JOIN users u ON u.i
         r.getObject("service_item_id", UUID.class),
         r.getString("name"),
         r.getBigDecimal("labor_price"),
-        r.getInt("duration_minutes"));
+        r.getInt("duration_minutes"),
+        r.getInt("quantity"));
   }
 
   private static OffsetDateTime time(ResultSet r, String field) throws SQLException {
