@@ -382,6 +382,11 @@ public class WorkService {
         : rows("SELECT * FROM work_orders WHERE customer_id=? ORDER BY received_at DESC,id", user);
   }
 
+  public List<Map<String, Object>> mechanicList(UUID mechanic) {
+    return rows(
+        "SELECT * FROM work_orders WHERE mechanic_id=? ORDER BY received_at DESC,id", mechanic);
+  }
+
   public Map<String, Object> detail(String email, UUID work, boolean admin) {
     UUID user = actor(email, admin);
     var result =
@@ -389,6 +394,15 @@ public class WorkService {
             admin
                 ? one("SELECT * FROM work_orders WHERE id=?", work)
                 : one("SELECT * FROM work_orders WHERE id=? AND customer_id=?", work, user));
+    return detail(result, work, admin);
+  }
+
+  public Map<String, Object> mechanicDetail(UUID mechanic, UUID work) {
+    var result = clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic));
+    return detail(result, work, false);
+  }
+
+  private Map<String, Object> detail(Map<String, Object> result, UUID work, boolean admin) {
     result.put(
         "items",
         rows("SELECT * FROM work_order_items WHERE work_order_id=? ORDER BY name,id", work));
@@ -411,7 +425,7 @@ public class WorkService {
                 "SELECT event_type,detail,created_at FROM work_order_events WHERE work_order_id=?"
                     + " ORDER BY created_at,id",
                 work));
-    // Customers see their usage, not stock levels or administrator identities.
+    // Non-admin readers see work usage, not warehouse levels or administrator identities.
     result.put(
         "movements",
         admin

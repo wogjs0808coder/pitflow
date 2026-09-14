@@ -56,6 +56,8 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers("/api/admin/**")
                 .hasRole("ADMIN")
+                .requestMatchers("/api/mechanic/**")
+                .hasRole("MECHANIC")
                 .anyRequest()
                 .authenticated());
     http.formLogin(

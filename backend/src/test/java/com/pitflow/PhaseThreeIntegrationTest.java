@@ -195,6 +195,22 @@ class PhaseThreeIntegrationTest {
     return Map.of("lines", List.of(Map.of("partId", p, "quantity", q)), "reason", "정비 사용");
   }
 
+  UUID mechanicAccount(String email, String code, boolean active) {
+    UUID account =
+        users
+            .saveAndFlush(new AppUser(email, "test-hash", code, AppUser.Role.MECHANIC))
+            .getId();
+    UUID profile = UUID.randomUUID();
+    db.update(
+        "INSERT INTO mechanics (id,user_id,code,name,active) VALUES (?,?,?,?,?)",
+        profile,
+        account,
+        code,
+        code,
+        active);
+    return profile;
+  }
+
   String usePath(UUID w) {
     return "/api/admin/work-orders/" + w + "/parts/use";
   }
@@ -1223,6 +1239,84 @@ class PhaseThreeIntegrationTest {
     assertThat(movement.has("balance_after")).isFalse();
     assertThat(movement.has("actor_id")).isFalse();
     reconciles(p);
+  }
+
+  @Test
+  void mechanicCanReadOnlyOwnAssignedWorkOrders() throws Exception {
+    UUID account =
+        users
+            .saveAndFlush(
+                new AppUser(
+                    "assigned-mechanic@example.com", "test-hash", "담당 정비사", AppUser.Role.MECHANIC))
+            .getId();
+    db.update("UPDATE mechanics SET user_id=? WHERE id=?", account, mechanic);
+    UUID own = work(appointment);
+
+    UUID otherMechanic = mechanicAccount("other-mechanic@example.com", "P2C-OTHER", true);
+    UUID other = work(appointment());
+    db.update(
+        "UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?",
+        otherMechanic,
+        other);
+    UUID unassigned = work(appointment());
+    db.update(
+        "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", unassigned);
+
+    var mechanicUser = user("assigned-mechanic@example.com").roles("MECHANIC");
+    mvc.perform(get("/api/mechanic/work-orders").with(mechanicUser))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].id").value(own.toString()));
+    mvc.perform(get("/api/mechanic/work-orders/" + own).with(mechanicUser))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(own.toString()))
+        .andExpect(jsonPath("$.events[0].actor_id").doesNotExist());
+    mvc.perform(get("/api/mechanic/work-orders/" + other).with(mechanicUser))
+        .andExpect(status().isNotFound());
+    mvc.perform(get("/api/mechanic/work-orders/" + unassigned).with(mechanicUser))
+        .andExpect(status().isNotFound());
+    mvc.perform(
+            patch("/api/admin/work-orders/" + own + "/status")
+                .with(mechanicUser)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"status\":\"IN_PROGRESS\"}"))
+        .andExpect(status().isForbidden());
+    assertThat(db.queryForObject("SELECT status FROM work_orders WHERE id=?", String.class, own))
+        .isEqualTo("RECEIVED");
+
+    mvc.perform(get("/api/admin/work-orders").with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(3));
+    mvc.perform(
+            get("/api/work-orders").with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(3));
+  }
+
+  @Test
+  void inactiveAndUnlinkedMechanicAccountsCannotReadWorkOrders() throws Exception {
+    mechanicAccount("inactive-mechanic@example.com", "P2C-INACTIVE", false);
+    users.saveAndFlush(
+        new AppUser(
+            "unlinked-mechanic@example.com", "test-hash", "미연결", AppUser.Role.MECHANIC));
+
+    mvc.perform(
+            get("/api/mechanic/work-orders")
+                .with(user("inactive-mechanic@example.com").roles("MECHANIC")))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            get("/api/mechanic/work-orders")
+                .with(user("unlinked-mechanic@example.com").roles("MECHANIC")))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void customerCannotUseMechanicWorkOrderEndpoints() throws Exception {
+    mvc.perform(
+            get("/api/mechanic/work-orders")
+                .with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isForbidden());
   }
 
   @Test
