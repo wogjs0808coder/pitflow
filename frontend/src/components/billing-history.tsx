@@ -116,7 +116,7 @@ export function BillingHistory() {
               </div>
               <p>
                 입고 주행거리 {work.received_mileage.toLocaleString()} km · 담당{" "}
-                {work.mechanic_name}
+                {work.mechanic_name ?? "미배정"}
               </p>
               {work.notes && <p className="muted">요청사항: {work.notes}</p>}
               <h3>정비 항목</h3>

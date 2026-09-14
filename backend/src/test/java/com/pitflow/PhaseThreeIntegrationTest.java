@@ -3,6 +3,7 @@ package com.pitflow;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.fasterxml.jackson.databind.*;
 import com.pitflow.user.*;
@@ -570,6 +571,109 @@ class PhaseThreeIntegrationTest {
                 .getStatus())
         .isEqualTo(409);
     assertThat(count("work_orders")).isZero();
+  }
+
+  @Test
+  void adminCanAssignReassignReadAndClearCurrentMechanic() throws Exception {
+    UUID w = work(appointment);
+    var unassigned = new HashMap<String, Object>();
+    unassigned.put("mechanicId", null);
+    var cleared =
+        ok("PATCH", "/api/admin/work-orders/" + w + "/assignment", unassigned);
+    assertThat(cleared.get("mechanic_id").isNull()).isTrue();
+    assertThat(cleared.get("mechanic_name").isNull()).isTrue();
+
+    var assigned =
+        ok(
+            "PATCH",
+            "/api/admin/work-orders/" + w + "/assignment",
+            Map.of("mechanicId", mechanic));
+    assertThat(assigned.get("mechanic_id").asText()).isEqualTo(mechanic.toString());
+
+    UUID other =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/mechanics",
+                    Map.of("code", "M2", "name", "다른 정비사", "active", true))
+                .get("id")
+                .asText());
+    var reassigned =
+        ok(
+            "PATCH",
+            "/api/admin/work-orders/" + w + "/assignment",
+            Map.of("mechanicId", other));
+    assertThat(reassigned.get("mechanic_id").asText()).isEqualTo(other.toString());
+    assertThat(reassigned.get("mechanic_name").asText()).isEqualTo("다른 정비사");
+
+    mvc.perform(get("/api/admin/work-orders/" + w).with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.mechanic_id").value(other.toString()))
+        .andExpect(jsonPath("$.mechanic_name").value("다른 정비사"));
+    ok(
+        "PATCH",
+        "/api/admin/mechanics/" + other,
+        Map.of("code", "M2", "name", "다른 정비사", "active", false));
+    mvc.perform(get("/api/admin/work-orders/" + w).with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.mechanic_id").value(other.toString()))
+        .andExpect(jsonPath("$.mechanic_name").value("다른 정비사"));
+  }
+
+  @Test
+  void assignmentRejectsMissingInactiveAndNonAdminMechanics() throws Exception {
+    UUID w = work(appointment);
+    String path = "/api/admin/work-orders/" + w + "/assignment";
+    assertThat(
+            request(
+                    "PATCH",
+                    path,
+                    Map.of("mechanicId", UUID.randomUUID()),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+
+    UUID inactive =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/mechanics",
+                    Map.of("code", "M2", "name", "비활성 정비사", "active", false))
+                .get("id")
+                .asText());
+    assertThat(
+            request(
+                    "PATCH",
+                    path,
+                    Map.of("mechanicId", inactive),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            request(
+                    "PATCH",
+                    path,
+                    Map.of("mechanicId", mechanic),
+                    UUID.randomUUID(),
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    mvc.perform(
+            patch(path)
+                .with(user("phase2b-mechanic@example.com").roles("MECHANIC"))
+                .with(csrf())
+                .header("Idempotency-Key", UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("mechanicId", mechanic))))
+        .andExpect(status().isForbidden());
   }
 
   @Test

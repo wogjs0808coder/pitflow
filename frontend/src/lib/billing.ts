@@ -52,7 +52,7 @@ export type InvoiceDetail = {
   vehicle_label: string;
   plate_number: string;
   received_mileage: number;
-  mechanic_name: string;
+  mechanic_name: string | null;
   completed_at: string | null;
   items: BillingItem[];
   payments: Payment[];
@@ -67,7 +67,7 @@ export type HistoryWork = {
   vehicle_label: string;
   plate_number: string;
   received_mileage: number;
-  mechanic_name: string;
+  mechanic_name: string | null;
   status: WorkStatus;
   notes: string;
   received_at: string;

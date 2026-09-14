@@ -45,7 +45,7 @@ public final class WorkRequests {
 
   public record State(@NotNull Status status, @Size(max = 900) String reason) {}
 
-  public record Assignment(@NotNull UUID mechanicId) {}
+  public record Assignment(UUID mechanicId) {}
 
   public record ItemState(@NotNull Boolean done) {}
 

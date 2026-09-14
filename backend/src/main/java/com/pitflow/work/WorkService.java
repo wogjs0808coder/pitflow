@@ -491,6 +491,12 @@ public class WorkService {
         r,
         () -> {
           editable(lockWork(work));
+          if (r.mechanicId() == null) {
+            db.update(
+                "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", work);
+            event(work, actor(email, true), "UNASSIGNED", "담당 정비사 배정 해제");
+            return detail(email, work, true);
+          }
           var m = one("SELECT * FROM mechanics WHERE id=? FOR UPDATE", r.mechanicId());
           if (!active(m)) throw conflict("활성 정비사를 선택해 주세요.");
           db.update(

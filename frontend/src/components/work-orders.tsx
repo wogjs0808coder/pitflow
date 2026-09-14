@@ -130,7 +130,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
   const shown = orders.filter(
     (w) =>
       (filter === "all" || category(w) === filter) &&
-      `${w.plate_number} ${w.vehicle_label} ${w.mechanic_name}`
+      `${w.plate_number} ${w.vehicle_label} ${w.mechanic_name ?? ""}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -403,7 +403,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                   {localTime(w.received_at)} ·{" "}
                   {w.received_mileage.toLocaleString()} km
                 </span>
-                <span>담당 {w.mechanic_name}</span>
+                <span>담당 {w.mechanic_name ?? "미배정"}</span>
               </button>
             ))}
             {!shown.length && !error && (
@@ -421,7 +421,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                 </h2>
                 <p>
                   입고 {detail.received_mileage.toLocaleString()} km · 담당{" "}
-                  {detail.mechanic_name}
+                  {detail.mechanic_name ?? "미배정"}
                 </p>
                 <p className="booking-notes">{detail.notes}</p>
                 {detail.released_at ? (
@@ -524,8 +524,8 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                           담당 변경
                           <select
                             name="mechanic"
-                            defaultValue={detail.mechanic_id}
-                            key={detail.mechanic_id}
+                            defaultValue={detail.mechanic_id ?? undefined}
+                            key={detail.mechanic_id ?? "unassigned"}
                           >
                             {mechanics
                               .filter(
