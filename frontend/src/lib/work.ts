@@ -29,6 +29,7 @@ export type Part = {
   id: string;
   sku: string;
   name: string;
+  description: string;
   unit: string;
   quantity: Decimal;
   minimum_quantity: Decimal;

@@ -935,6 +935,107 @@ class PhaseThreeIntegrationTest {
   }
 
   @Test
+  void partDescriptionCanBeSavedClearedAndIsAdminOnly() throws Exception {
+    var created =
+        ok(
+            "POST",
+            "/api/admin/parts",
+            Map.of(
+                "sku",
+                "DESC-1",
+                "name",
+                "설명 테스트 부품",
+                "description",
+                "교환 전 규격을 확인하세요.\r\n서늘한 곳에 보관합니다.",
+                "unit",
+                "EA",
+                "minimumQuantity",
+                0,
+                "unitPrice",
+                15000,
+                "active",
+                true));
+    UUID part = UUID.fromString(created.get("id").asText());
+    assertThat(created.get("description").asText()).isEqualTo("교환 전 규격을 확인하세요.\n서늘한 곳에 보관합니다.");
+    assertThat(balance(part)).isEqualByComparingTo("0");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM stock_movements WHERE part_id=?", Integer.class, part))
+        .isZero();
+
+    var cleared =
+        ok(
+            "PATCH",
+            "/api/admin/parts/" + part,
+            Map.of(
+                "sku",
+                "DESC-1",
+                "name",
+                "설명 테스트 부품",
+                "description",
+                "   ",
+                "unit",
+                "EA",
+                "minimumQuantity",
+                0,
+                "unitPrice",
+                15000,
+                "active",
+                true));
+    assertThat(cleared.get("description").asText()).isEmpty();
+
+    var tooLong =
+        request(
+            "PATCH",
+            "/api/admin/parts/" + part,
+            Map.of(
+                "sku",
+                "DESC-1",
+                "name",
+                "설명 테스트 부품",
+                "description",
+                "가".repeat(601),
+                "unit",
+                "EA",
+                "minimumQuantity",
+                0,
+                "unitPrice",
+                15000,
+                "active",
+                true),
+            UUID.randomUUID(),
+            admin,
+            true);
+    assertThat(tooLong.getResponse().getStatus()).isEqualTo(400);
+
+    var customerAttempt =
+        request(
+            "PATCH",
+            "/api/admin/parts/" + part,
+            Map.of(
+                "sku",
+                "DESC-1",
+                "name",
+                "권한 없음",
+                "description",
+                "변경 시도",
+                "unit",
+                "EA",
+                "minimumQuantity",
+                0,
+                "unitPrice",
+                15000,
+                "active",
+                true),
+            UUID.randomUUID(),
+            "work-customer@example.com",
+            true);
+    assertThat(customerAttempt.getResponse().getStatus()).isEqualTo(403);
+    assertThat(db.queryForObject("SELECT name FROM parts WHERE id=?", String.class, part))
+        .isEqualTo("설명 테스트 부품");
+  }
+
+  @Test
   void returnMustBelongToOrderAndCustomerCannotSeeWarehouseBalance() throws Exception {
     UUID w = running(), w2 = work(appointment()), p = part("A", "2");
     String original =

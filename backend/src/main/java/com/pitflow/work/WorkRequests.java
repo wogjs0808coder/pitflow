@@ -31,6 +31,7 @@ public final class WorkRequests {
   public record Part(
       @NotBlank @Size(max = 60) String sku,
       @NotBlank @Size(max = 120) String name,
+      @Size(max = 600) String description,
       @NotNull Unit unit,
       @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal minimumQuantity,
       @NotNull @DecimalMin("0") @Digits(integer = 12, fraction = 0) BigDecimal unitPrice,
