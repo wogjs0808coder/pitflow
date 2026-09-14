@@ -86,27 +86,58 @@ class CatalogEstimateIntegrationTest {
   }
 
   @Test
-  void washerServiceKeepsVariableQuantityWhenAdminSavesIt() {
+    void washerServiceKeepsVariableQuantityWhenAdminSavesIt() {
     UUID washerService =
         UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
-    UUID washerPart =
-        db.queryForObject("SELECT id FROM parts WHERE sku='PF-WASHER'", UUID.class);
 
-    ServiceView before =
-        catalog.list(true).stream()
-            .filter(item -> item.id().equals(washerService))
-            .findFirst()
-            .orElseThrow();
+    UUID washerPart =
+        db.queryForObject(
+            "SELECT id FROM parts WHERE sku='PF-WASHER'",
+            UUID.class);
+
+    // Other integration tests may clear service_items from the shared CI test DB.
+    // This test owns its prerequisite instead of depending on migration seed state.
+    db.update(
+        """
+        INSERT INTO service_items(
+            id,
+            name,
+            description,
+            labor_price,
+            duration_minutes,
+            active,
+            created_at,
+            updated_at,
+            requirements_confirmed
+        )
+        SELECT
+            ?,
+            '워셔액 보충 서비스',
+            '실제 제공량은 작업 시 확정합니다.',
+            0,
+            30,
+            TRUE,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP,
+            FALSE
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM service_items
+            WHERE id=?
+        )
+        """,
+        washerService,
+        washerService);
 
     ServiceView saved =
         catalog.update(
             washerService,
             new ServiceRequest(
-                before.name(),
-                before.description(),
-                before.laborPrice(),
-                before.durationMinutes(),
-                before.active(),
+                "워셔액 보충 서비스",
+                "실제 제공량은 작업 시 확정합니다.",
+                BigDecimal.ZERO,
+                30,
+                true,
                 List.of(new PartRequirement(washerPart, null))));
 
     assertThat(saved.requirementsConfirmed()).isTrue();
@@ -139,7 +170,7 @@ class CatalogEstimateIntegrationTest {
                 washerService,
                 washerPart))
         .isFalse();
-  }
+    }
   @Test
   void inactivePartCannotBecomeAConfirmedRequirement() {
     UUID tire = db.queryForObject("SELECT id FROM parts WHERE sku='PF-TIRE'", UUID.class);
