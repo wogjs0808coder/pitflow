@@ -266,6 +266,7 @@ FROM appointments a JOIN work_bays b ON b.id = a.work_bay_id JOIN users u ON u.i
     return new Row(
         r.getObject("id", UUID.class),
         r.getObject("customer_id", UUID.class),
+        r.getObject("vehicle_id", UUID.class),
         r.getString("plate_number"),
         r.getString("vehicle_label"),
         r.getObject("work_bay_id", UUID.class),
