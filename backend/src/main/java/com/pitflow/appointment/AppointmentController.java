@@ -13,9 +13,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/appointments")
 public class AppointmentController {
   private final AppointmentService service;
+  private final QuotedAppointmentService quoted;
 
-  public AppointmentController(AppointmentService service) {
+  public AppointmentController(AppointmentService service, QuotedAppointmentService quoted) {
     this.service = service;
+    this.quoted = quoted;
   }
 
   @GetMapping("/policy")
@@ -26,6 +28,12 @@ public class AppointmentController {
   @PostMapping("/quote")
   public Quote quote(@Valid @RequestBody QuoteRequest request) {
     return service.quote(request);
+  }
+
+  @PostMapping("/availability/quoted")
+  public Availability quotedAvailability(
+      Principal p, @Valid @RequestBody QuoteAvailabilityRequest request) {
+    return quoted.availability(p.getName(), request);
   }
 
   @GetMapping("/availability")
@@ -50,6 +58,9 @@ public class AppointmentController {
   @PostMapping
   @ResponseStatus(HttpStatus.CREATED)
   public View create(Principal p, @Valid @RequestBody CreateRequest request) {
+    if (request.items() != null && !request.items().isEmpty()) {
+      return quoted.create(p.getName(), request);
+    }
     return service.create(p.getName(), request);
   }
 
