@@ -1,5 +1,6 @@
 package com.pitflow.appointment;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.*;
@@ -22,6 +23,40 @@ public final class AppointmentModels {
       @NotEmpty @Size(max = 16) List<@NotNull UUID> serviceIds,
       @NotNull OffsetDateTime startsAt,
       @Size(max = 500) String notes) {}
+
+  public record QuoteSelection(@NotNull UUID serviceId, @Min(1) @Max(16) int quantity) {}
+
+  public record QuoteRequest(@NotEmpty @Size(max = 16) List<@Valid QuoteSelection> items) {}
+
+  public record QuotePart(
+      UUID partId,
+      String name,
+      String unit,
+      BigDecimal requiredQuantityPerService,
+      BigDecimal totalQuantity,
+      BigDecimal unitPrice,
+      BigDecimal amount,
+      String chargePolicy) {}
+
+  public record QuoteItem(
+      UUID serviceId,
+      String name,
+      int quantity,
+      BigDecimal laborUnitPrice,
+      BigDecimal laborAmount,
+      int durationMinutesPerService,
+      int durationMinutes,
+      List<QuotePart> parts,
+      BigDecimal partsAmount,
+      BigDecimal totalAmount) {}
+
+  public record Quote(
+      List<QuoteItem> items,
+      BigDecimal totalLaborPrice,
+      BigDecimal totalPartsPrice,
+      BigDecimal totalPrice,
+      int durationMinutes,
+      String fingerprint) {}
 
   public record StatusRequest(@NotNull Status status) {}
 
