@@ -23,6 +23,11 @@ public class AppointmentController {
     return service.policy();
   }
 
+  @PostMapping("/quote")
+  public Quote quote(@Valid @RequestBody QuoteRequest request) {
+    return service.quote(request);
+  }
+
   @GetMapping("/availability")
   public Availability availability(
       Principal p,
