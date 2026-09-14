@@ -547,6 +547,7 @@ footer {
   font-size: 0.9375rem;
   flex: 1;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .catalog-meta {
   display: flex;
