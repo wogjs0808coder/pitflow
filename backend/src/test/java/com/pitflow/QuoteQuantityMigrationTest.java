@@ -47,8 +47,9 @@ class QuoteQuantityMigrationTest {
                 + " (?,'legacy@example.com','x','Legacy','CUSTOMER',CURRENT_TIMESTAMP)",
             customer);
         db.update(
-            "INSERT INTO vehicles (id,owner_id,plate_number,manufacturer,model,mileage,created_at,updated_at)"
-                + " VALUES (?,?,'12가3456','Test','Car',1000,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+            "INSERT INTO vehicles"
+                + " (id,owner_id,plate_number,manufacturer,model,model_year,mileage,created_at,updated_at)"
+                + " VALUES (?,?,'12가3456','Test','Car',2024,1000,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
             vehicle,
             customer);
         db.update(
