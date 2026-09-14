@@ -90,9 +90,31 @@ UPDATE service_part_requirements SET required_quantity=1, quantity_confirmed=TRU
 INSERT INTO service_part_requirements(service_id,part_id,required_quantity,quantity_confirmed) SELECT 'a48cdee0-93ae-31ea-9c21-6207575aa691',id,1,TRUE FROM parts p WHERE sku='PF-BELT' AND NOT EXISTS(SELECT 1 FROM service_part_requirements r WHERE r.service_id='a48cdee0-93ae-31ea-9c21-6207575aa691' AND r.part_id=p.id);
 UPDATE service_part_requirements SET required_quantity=1, quantity_confirmed=TRUE WHERE service_id='373a3681-4f49-3272-b2f2-69378498d4ae' AND part_id=(SELECT id FROM parts WHERE sku='PF-BULB');
 INSERT INTO service_part_requirements(service_id,part_id,required_quantity,quantity_confirmed) SELECT '373a3681-4f49-3272-b2f2-69378498d4ae',id,1,TRUE FROM parts p WHERE sku='PF-BULB' AND NOT EXISTS(SELECT 1 FROM service_part_requirements r WHERE r.service_id='373a3681-4f49-3272-b2f2-69378498d4ae' AND r.part_id=p.id);
-UPDATE service_part_requirements SET required_quantity=1, quantity_confirmed=TRUE WHERE service_id='f6b2e966-cf84-3576-9a3f-a64ebf1de473' AND part_id=(SELECT id FROM parts WHERE sku='PF-WASHER');
-INSERT INTO service_part_requirements(service_id,part_id,required_quantity,quantity_confirmed) SELECT 'f6b2e966-cf84-3576-9a3f-a64ebf1de473',id,1,TRUE FROM parts p WHERE sku='PF-WASHER' AND NOT EXISTS(SELECT 1 FROM service_part_requirements r WHERE r.service_id='f6b2e966-cf84-3576-9a3f-a64ebf1de473' AND r.part_id=p.id);
+UPDATE service_part_requirements
+SET required_quantity=NULL,
+    quantity_confirmed=FALSE
+WHERE service_id='f6b2e966-cf84-3576-9a3f-a64ebf1de473'
+  AND part_id=(SELECT id FROM parts WHERE sku='PF-WASHER');
 
+INSERT INTO service_part_requirements(
+    service_id,
+    part_id,
+    required_quantity,
+    quantity_confirmed
+)
+SELECT
+    'f6b2e966-cf84-3576-9a3f-a64ebf1de473',
+    id,
+    NULL,
+    FALSE
+FROM parts p
+WHERE sku='PF-WASHER'
+  AND NOT EXISTS(
+      SELECT 1
+      FROM service_part_requirements r
+      WHERE r.service_id='f6b2e966-cf84-3576-9a3f-a64ebf1de473'
+        AND r.part_id=p.id
+  );
 UPDATE service_items s SET requirements_confirmed=TRUE
  WHERE s.id='11111111-1111-4111-8111-111111111111'
    AND 2=(SELECT COUNT(*) FROM service_part_requirements r WHERE r.service_id=s.id AND r.quantity_confirmed=TRUE)
@@ -105,10 +127,24 @@ UPDATE service_items s SET requirements_confirmed=TRUE
  '23a019ff-2986-3d82-8972-96f8f0522340','5e11b1ac-875b-32da-ad90-556bebb0a681',
  'da2c3e6f-a598-37f7-8c48-a51e4668f185','b6d9d7f7-f033-35ee-aee2-beee44c98181',
  'd63aeb42-9933-3209-a67f-4b37a157a43c','a48cdee0-93ae-31ea-9c21-6207575aa691',
- '373a3681-4f49-3272-b2f2-69378498d4ae','f6b2e966-cf84-3576-9a3f-a64ebf1de473')
+ '373a3681-4f49-3272-b2f2-69378498d4ae')
    AND 1=(SELECT COUNT(*) FROM service_part_requirements r WHERE r.service_id=s.id AND r.quantity_confirmed=TRUE)
    AND 0=(SELECT COUNT(*) FROM service_part_requirements r WHERE r.service_id=s.id AND r.quantity_confirmed=FALSE);
 
+-- Washer fluid has a confirmed part link, but its actual quantity is recorded at provision time.
+UPDATE service_items s
+SET requirements_confirmed=TRUE
+WHERE s.id='f6b2e966-cf84-3576-9a3f-a64ebf1de473'
+  AND 1=(
+      SELECT COUNT(*)
+      FROM service_part_requirements r
+      JOIN parts p ON p.id=r.part_id
+      WHERE r.service_id=s.id
+        AND p.sku='PF-WASHER'
+        AND r.required_quantity IS NULL
+        AND r.quantity_confirmed=FALSE
+  )
+  AND 1=(SELECT COUNT(*) FROM service_part_requirements r WHERE r.service_id=s.id);
 INSERT INTO service_selection_conflicts(service_id_a,service_id_b,reason)
 SELECT '11111111-1111-4111-8111-111111111111','953e027e-f285-39fb-aa5c-cfa91e47a613',
        '엔진오일 교체 항목에 엔진 에어필터가 포함되어 있습니다.'

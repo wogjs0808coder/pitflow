@@ -56,7 +56,11 @@ class PhaseThreeIntegrationTest {
                 .asText());
     serviceItem = UUID.randomUUID();
     db.update(
-        "INSERT INTO service_items VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        """
+        INSERT INTO service_items
+        (id,name,description,labor_price,duration_minutes,active,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        """,
         serviceItem,
         "테스트 정비",
         "설명",
@@ -102,7 +106,16 @@ class PhaseThreeIntegrationTest {
         start.plusMinutes(30),
         "VISITED");
     db.update(
-        "INSERT INTO appointment_items VALUES (?,?,?,?,?)", id, serviceItem, "예약 당시 정비", 20000, 30);
+        """
+        INSERT INTO appointment_items
+        (appointment_id, service_item_id, name, labor_price, duration_minutes)
+        VALUES (?,?,?,?,?)
+        """,
+        id,
+        serviceItem,
+        "예약 당시 정비",
+        20000,
+        30);
     return id;
   }
 
@@ -203,6 +216,54 @@ class PhaseThreeIntegrationTest {
     assertThat(balance(p)).isEqualByComparingTo(net);
   }
 
+  @Test
+  void washerUsesActualFractionalQuantityOnlyOncePerWorkOrder() throws Exception {
+    UUID washerService =
+        UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
+
+    db.update(
+        """
+        INSERT INTO service_items
+          (id,name,description,labor_price,duration_minutes,active,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        """,
+        washerService,
+        "워셔액 보충 서비스",
+        "테스트",
+        0,
+        30,
+        true);
+
+    UUID w = running();
+    db.update(
+        "UPDATE work_order_items SET service_item_id=? WHERE work_order_id=?",
+        washerService,
+        w);
+
+    UUID washer = part("PF-WASHER", "2");
+
+    assertThat(
+            request("POST", usePath(w), use(washer, "0.5"), UUID.randomUUID(), admin, true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    assertThat(balance(washer)).isEqualByComparingTo("1.5");
+
+    assertThat(
+            request("POST", usePath(w), use(washer, "0.25"), UUID.randomUUID(), admin, true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+
+    assertThat(balance(washer)).isEqualByComparingTo("1.5");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM stock_movements WHERE work_order_id=? AND part_id=? AND kind='USE'",
+                Integer.class,
+                w,
+                washer))
+        .isEqualTo(1);
+  }
   @Test
   void releaseRequiresCompletionAndPreservesOneEventUnderConcurrentRequests() throws Exception {
     UUID w = running();
@@ -1059,6 +1120,75 @@ class PhaseThreeIntegrationTest {
     assertThat(movement.has("actor_id")).isFalse();
     reconciles(p);
   }
+
+  @Test
+    void eaPartsRejectFractionalUseButAllowWholeQuantity() throws Exception {
+    UUID w = running();
+
+    UUID p =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/parts",
+                    Map.of(
+                        "sku", "EA-TEST",
+                        "name", "EA 테스트 부품",
+                        "unit", "EA",
+                        "minimumQuantity", "1",
+                        "unitPrice", 10000,
+                        "active", true))
+                .get("id")
+                .asText());
+
+    ok(
+        "POST",
+        "/api/admin/parts/" + p + "/receipts",
+        Map.of(
+            "quantity", "4",
+            "reason", "테스트 입고"));
+
+    assertThat(
+            request(
+                    "POST",
+                    usePath(w),
+                    Map.of(
+                        "lines",
+                        List.of(
+                            Map.of(
+                                "partId", p,
+                                "quantity", "1.999")),
+                        "reason",
+                        "소수 EA 테스트"),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(400);
+
+    assertThat(balance(p)).isEqualByComparingTo("4");
+
+    assertThat(
+            request(
+                    "POST",
+                    usePath(w),
+                    Map.of(
+                        "lines",
+                        List.of(
+                            Map.of(
+                                "partId", p,
+                                "quantity", "2")),
+                        "reason",
+                        "정상 EA 테스트"),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+
+    assertThat(balance(p)).isEqualByComparingTo("2");
+    }
 
   @Test
   void recordedMileageCannotBeOverwrittenByCustomerUpdate() throws Exception {

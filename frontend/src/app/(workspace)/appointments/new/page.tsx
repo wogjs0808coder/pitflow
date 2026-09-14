@@ -8,7 +8,7 @@ import { AppointmentCard } from "@/components/appointment-card";
 
 type Setup = { cars: Vehicle[]; services: ServiceItem[]; policy: BookingPolicy };
 type QuoteSelection = { serviceId: string; quantity: number };
-type QuotePart = { partId: string; name: string; unit: string; totalQuantity: number; unitPrice: number; amount: number; chargePolicy: "STANDARD" | "COMPLIMENTARY" };
+type QuotePart = { partId: string; name: string; unit: string; totalQuantity: number | null; unitPrice: number; amount: number; chargePolicy: "STANDARD" | "COMPLIMENTARY" };
 type QuoteItem = { serviceId: string; name: string; quantity: number; laborUnitPrice: number; laborAmount: number; durationMinutes: number; parts: QuotePart[]; partsAmount: number; totalAmount: number };
 type AppointmentQuote = { items: QuoteItem[]; totalLaborPrice: number; totalPartsPrice: number; totalPrice: number; durationMinutes: number; fingerprint: string };
 

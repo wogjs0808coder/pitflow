@@ -86,6 +86,61 @@ class CatalogEstimateIntegrationTest {
   }
 
   @Test
+  void washerServiceKeepsVariableQuantityWhenAdminSavesIt() {
+    UUID washerService =
+        UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
+    UUID washerPart =
+        db.queryForObject("SELECT id FROM parts WHERE sku='PF-WASHER'", UUID.class);
+
+    ServiceView before =
+        catalog.list(true).stream()
+            .filter(item -> item.id().equals(washerService))
+            .findFirst()
+            .orElseThrow();
+
+    ServiceView saved =
+        catalog.update(
+            washerService,
+            new ServiceRequest(
+                before.name(),
+                before.description(),
+                before.laborPrice(),
+                before.durationMinutes(),
+                before.active(),
+                List.of(new PartRequirement(washerPart, null))));
+
+    assertThat(saved.requirementsConfirmed()).isTrue();
+    assertThat(saved.parts()).hasSize(1);
+    assertThat(saved.parts().get(0).partId()).isEqualTo(washerPart);
+    assertThat(saved.parts().get(0).quantity()).isNull();
+    assertThat(saved.estimatedPartsPrice()).isEqualByComparingTo("0");
+    assertThat(saved.estimatedTotalPrice()).isEqualByComparingTo("0");
+
+    assertThat(
+            db.queryForObject(
+                """
+                SELECT required_quantity
+                FROM service_part_requirements
+                WHERE service_id=? AND part_id=?
+                """,
+                BigDecimal.class,
+                washerService,
+                washerPart))
+        .isNull();
+
+    assertThat(
+            db.queryForObject(
+                """
+                SELECT quantity_confirmed
+                FROM service_part_requirements
+                WHERE service_id=? AND part_id=?
+                """,
+                Boolean.class,
+                washerService,
+                washerPart))
+        .isFalse();
+  }
+  @Test
   void inactivePartCannotBecomeAConfirmedRequirement() {
     UUID tire = db.queryForObject("SELECT id FROM parts WHERE sku='PF-TIRE'", UUID.class);
     db.update("UPDATE parts SET active=FALSE WHERE id=?", tire);

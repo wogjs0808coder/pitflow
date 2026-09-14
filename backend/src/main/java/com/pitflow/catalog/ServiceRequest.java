@@ -24,7 +24,7 @@ public record ServiceRequest(
 
   public record PartRequirement(
       @NotNull UUID partId,
-      @NotNull @DecimalMin(value = "0", inclusive = false) @Digits(integer = 11, fraction = 3)
+      @DecimalMin(value = "0", inclusive = false) @Digits(integer = 11, fraction = 3)
           BigDecimal quantity) {}
 
   @AssertTrue(message = "작업 시간은 30분 단위로 입력해 주세요.")

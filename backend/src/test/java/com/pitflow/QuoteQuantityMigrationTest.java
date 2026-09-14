@@ -1,7 +1,8 @@
 package com.pitflow;
 
 import static org.assertj.core.api.Assertions.*;
-
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.sql.DriverManager;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
@@ -52,14 +53,24 @@ class QuoteQuantityMigrationTest {
                 + " VALUES (?,?,'12가3456','Test','Car',2024,1000,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
             vehicle,
             customer);
+        var startsAt = OffsetDateTime.now(ZoneOffset.UTC).withNano(0);
+        var endsAt = startsAt.plusMinutes(30);
         db.update(
-            "INSERT INTO appointments"
-                + " (id,customer_id,vehicle_id,work_bay_id,plate_number,vehicle_label,starts_at,ends_at,status,notes,total_labor_price,duration_minutes,created_at,updated_at)"
-                + " VALUES (?,?,?,?,'12가3456','Test Car',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + INTERVAL '30 minutes','PENDING','',10000,30,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+            """
+            INSERT INTO appointments
+            (id,customer_id,vehicle_id,work_bay_id,plate_number,vehicle_label,
+            starts_at,ends_at,status,notes,total_labor_price,duration_minutes,
+            created_at,updated_at)
+            VALUES
+            (?,?,?,?,'12가3456','Test Car',?,?,'PENDING','',10000,30,
+            CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+            """,
             appointment,
             customer,
             vehicle,
-            bay);
+            bay,
+            startsAt,
+            endsAt);
         db.update(
             "INSERT INTO appointment_items"
                 + " (appointment_id,service_item_id,name,labor_price,duration_minutes) VALUES"

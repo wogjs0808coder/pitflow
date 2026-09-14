@@ -13,6 +13,9 @@ type AdminPart = {
   archived: boolean;
 };
 
+const WASHER_SERVICE_ID =
+  "f6b2e966-cf84-3576-9a3f-a64ebf1de473";
+
 export function Catalog({ admin = false }: { admin?: boolean }) {
   const { user } = useAuth();
   const allowed = !admin || user?.role === "ADMIN";
@@ -62,11 +65,14 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
     setBusy(true);
     setError("");
     const f = new FormData(e.currentTarget);
+    const variableWasher = editing?.id === WASHER_SERVICE_ID;
     const selectedParts = parts
       .filter((part) => f.get(`part-${part.id}`) === "on")
       .map((part) => ({
         partId: part.id,
-        quantity: String(f.get(`quantity-${part.id}`) ?? "1"),
+        quantity: variableWasher
+          ? null
+          : String(f.get(`quantity-${part.id}`) ?? "1"),
       }));
     const body = {
       name: String(f.get("name")).trim(),
@@ -233,9 +239,18 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
                             min="0.001"
                             max="99999999999.999"
                             step="0.001"
-                            defaultValue={current?.quantity ?? 1}
+                            disabled={editing?.id === WASHER_SERVICE_ID}
+                            defaultValue={
+                              editing?.id === WASHER_SERVICE_ID
+                                ? ""
+                                : current?.quantity ?? 1
+                            }
                           />
-                          <small>필요 수량 ({part.unit})</small>
+                          <small>
+                            {editing?.id === WASHER_SERVICE_ID
+                              ? `실제 제공량은 작업 시 입력 (${part.unit})`
+                              : `필요 수량 (${part.unit})`}
+                          </small>
                         </span>
                       </label>
                     );

@@ -109,12 +109,12 @@ class AppointmentQuoteServiceTest {
   }
 
   @Test
-  void washerRequiresPaidServiceAndIsQuotedAtZero() {
+  void washerRequiresPaidServiceAndUsesVariableComplimentaryQuantity() {
     UUID washerPart = UUID.randomUUID();
     when(repository.quoteServices(List.of(WASHER)))
         .thenReturn(List.of(serviceRow(WASHER, "워셔액 보충 서비스", 0, 30)));
     when(repository.quoteRequirements(List.of(WASHER)))
-        .thenReturn(List.of(requirement(WASHER, washerPart, "워셔액", "L", "1", "5000")));
+        .thenReturn(List.of(variableRequirement(WASHER, washerPart, "워셔액", "L", "5000")));
 
     assertThatThrownBy(
             () -> service.quote(new QuoteRequest(List.of(new QuoteSelection(WASHER, 1)))))
@@ -130,7 +130,7 @@ class AppointmentQuoteServiceTest {
         .thenReturn(
             List.of(
                 requirement(TIRE, UUID.randomUUID(), "자동차 타이어", "EA", "1", "100000"),
-                requirement(WASHER, washerPart, "워셔액", "L", "1", "5000")));
+                variableRequirement(WASHER, washerPart, "워셔액", "L", "5000")));
 
     Quote quote =
         service.quote(
@@ -140,7 +140,10 @@ class AppointmentQuoteServiceTest {
     assertThat(washer.totalAmount()).isEqualByComparingTo("0");
     assertThat(washer.partsAmount()).isEqualByComparingTo("0");
     assertThat(washer.parts().get(0).chargePolicy()).isEqualTo("COMPLIMENTARY");
+    assertThat(washer.parts().get(0).requiredQuantityPerService()).isNull();
+    assertThat(washer.parts().get(0).totalQuantity()).isNull();
     assertThat(quote.totalPrice()).isEqualByComparingTo("115000");
+    assertThat(quote.fingerprint()).hasSize(64);
   }
 
   @Test
@@ -173,6 +176,23 @@ class AppointmentQuoteServiceTest {
     return new QuoteServiceRow(id, name, BigDecimal.valueOf(labor), durationMinutes, true);
   }
 
+  private static QuoteRequirementRow variableRequirement(
+      UUID serviceId,
+      UUID partId,
+      String name,
+      String unit,
+      String unitPrice) {
+    return new QuoteRequirementRow(
+        serviceId,
+        partId,
+        name,
+        unit,
+        null,
+        new BigDecimal(unitPrice),
+        true,
+        false,
+        false);
+  }
   private static QuoteRequirementRow requirement(
       UUID serviceId,
       UUID partId,

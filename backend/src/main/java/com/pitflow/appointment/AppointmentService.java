@@ -80,10 +80,17 @@ public class AppointmentService {
     var requirements = repository.quoteRequirements(ids);
     var requirementsByService = new HashMap<UUID, List<QuoteRequirementRow>>();
     for (var requirement : requirements) {
-      if (!requirement.quantityConfirmed()
-          || requirement.requiredQuantity() == null
-          || requirement.requiredQuantity().signum() <= 0) {
-        throw conflict("부품 필요 수량이 확정되지 않은 정비 항목이 있습니다. 관리자에게 문의해 주세요.");
+      boolean variableWasher = WASHER_SERVICE.equals(requirement.serviceId());
+      if (variableWasher) {
+        if (requirement.quantityConfirmed() || requirement.requiredQuantity() != null) {
+          throw conflict("워셔액 제공량은 예약 시 확정하지 않고 실제 작업 시 입력해야 합니다.");
+        }
+      } else {
+        if (!requirement.quantityConfirmed()
+            || requirement.requiredQuantity() == null
+            || requirement.requiredQuantity().signum() <= 0) {
+          throw conflict("부품 필요 수량이 확정되지 않은 정비 항목이 있습니다. 관리자에게 문의해 주세요.");
+        }
       }
       if (!requirement.active() || requirement.archived()) {
         throw conflict("견적에 필요한 부품이 현재 비활성 상태입니다. 관리자에게 문의해 주세요.");
@@ -111,12 +118,28 @@ public class AppointmentService {
 
       for (var requirement :
           requirementsByService.getOrDefault(service.id(), List.of())) {
+        if (complimentary) {
+          quotedParts.add(
+              new QuotePart(
+                  requirement.partId(),
+                  requirement.partName(),
+                  requirement.unit(),
+                  null,
+                  null,
+                  requirement.unitPrice(),
+                  BigDecimal.ZERO,
+                  "COMPLIMENTARY"));
+          canonical
+              .append(requirement.partId())
+              .append(":VARIABLE:")
+              .append(requirement.unitPrice().toPlainString())
+              .append(":C|");
+          continue;
+        }
+
         BigDecimal totalQuantity =
             requirement.requiredQuantity().multiply(BigDecimal.valueOf(quantity));
-        BigDecimal amount =
-            complimentary
-                ? BigDecimal.ZERO
-                : money(requirement.unitPrice().multiply(totalQuantity));
+        BigDecimal amount = money(requirement.unitPrice().multiply(totalQuantity));
         quotedParts.add(
             new QuotePart(
                 requirement.partId(),
@@ -126,7 +149,7 @@ public class AppointmentService {
                 totalQuantity,
                 requirement.unitPrice(),
                 amount,
-                complimentary ? "COMPLIMENTARY" : "STANDARD"));
+                "STANDARD"));
         serviceParts = serviceParts.add(amount);
         canonical
             .append(requirement.partId())
@@ -134,9 +157,7 @@ public class AppointmentService {
             .append(requirement.requiredQuantity().stripTrailingZeros().toPlainString())
             .append(':')
             .append(requirement.unitPrice().toPlainString())
-            .append(':')
-            .append(complimentary ? 'C' : 'S')
-            .append('|');
+            .append(":S|");
       }
 
       BigDecimal totalAmount = money(laborAmount.add(serviceParts));

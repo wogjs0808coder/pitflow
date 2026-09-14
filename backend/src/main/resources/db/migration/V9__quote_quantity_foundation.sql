@@ -26,16 +26,31 @@ CREATE TABLE appointment_item_parts (
     part_id UUID NOT NULL REFERENCES parts(id),
     part_name VARCHAR(120) NOT NULL,
     unit VARCHAR(12) NOT NULL,
-    required_quantity_per_service NUMERIC(14,3) NOT NULL
-        CHECK (required_quantity_per_service > 0),
-    total_quantity NUMERIC(14,3) NOT NULL
-        CHECK (total_quantity > 0),
+    required_quantity_per_service NUMERIC(14,3),
+    total_quantity NUMERIC(14,3),
+
     unit_price NUMERIC(12,0) NOT NULL
         CHECK (unit_price >= 0),
     amount NUMERIC(14,0) NOT NULL
         CHECK (amount >= 0),
     charge_policy VARCHAR(20) NOT NULL DEFAULT 'STANDARD'
         CHECK (charge_policy IN ('STANDARD','COMPLIMENTARY')),
+
+    CONSTRAINT appointment_item_parts_quantity_policy CHECK (
+        (
+            required_quantity_per_service IS NOT NULL
+            AND required_quantity_per_service > 0
+            AND total_quantity IS NOT NULL
+            AND total_quantity > 0
+        )
+        OR
+        (
+            charge_policy = 'COMPLIMENTARY'
+            AND required_quantity_per_service IS NULL
+            AND total_quantity IS NULL
+        )
+    ),
+
     PRIMARY KEY (appointment_id, service_item_id, part_id),
     FOREIGN KEY (appointment_id, service_item_id)
         REFERENCES appointment_items(appointment_id, service_item_id)
