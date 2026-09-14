@@ -134,6 +134,18 @@ public class AppointmentRepository {
       UUID bay,
       OffsetDateTime start,
       List<Item> items,
+      String notes,
+      Instant now) {
+    insert(id, customer, car, bay, start, items, null, notes, now);
+  }
+
+  void insert(
+      UUID id,
+      UUID customer,
+      Car car,
+      UUID bay,
+      OffsetDateTime start,
+      List<Item> items,
       Quote quote,
       String notes,
       Instant now) {
