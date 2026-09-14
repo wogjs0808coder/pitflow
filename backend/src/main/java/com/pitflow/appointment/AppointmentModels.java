@@ -39,6 +39,11 @@ public final class AppointmentModels {
 
   public record QuoteRequest(@NotEmpty @Size(max = 16) List<@Valid QuoteSelection> items) {}
 
+  public record QuoteAvailabilityRequest(
+      @NotNull UUID vehicleId,
+      @NotNull LocalDate date,
+      @NotEmpty @Size(max = 16) List<@Valid QuoteSelection> items) {}
+
   public record QuotePart(
       UUID partId,
       String name,
