@@ -129,6 +129,7 @@ public class BillingService {
     var order = one("SELECT * FROM work_orders WHERE id=?", w);
     if (!"COMPLETED".equals(order.get("status"))) throw conflict("완료된 작업만 정산할 수 있습니다.");
     var lines = new ArrayList<Map<String, Object>>();
+    var complimentarySources = new HashSet<UUID>();
     for (var i :
         db.queryForList("SELECT * FROM work_order_items WHERE work_order_id=? ORDER BY id", w))
       lines.add(
@@ -136,27 +137,43 @@ public class BillingService {
               "LABOR",
               id(i, "id"),
               i.get("name").toString(),
-              BigDecimal.ONE,
+              number(i, "quantity"),
               "JOB",
               number(i, "labor_price")));
     for (var p :
         db.queryForList(
             """
-SELECT u.*,COALESCE((SELECT SUM(r.quantity) FROM stock_movements r WHERE r.original_use_id=u.id),0) AS returned
-FROM stock_movements u WHERE u.work_order_id=? AND u.kind='USE' ORDER BY u.id
+SELECT u.*,
+  COALESCE((SELECT SUM(r.quantity) FROM stock_movements r WHERE r.original_use_id=u.id),0) AS returned,
+  EXISTS (
+    SELECT 1
+    FROM work_orders wo
+    JOIN appointment_item_parts aip
+      ON aip.appointment_id=wo.appointment_id
+     AND aip.part_id=u.part_id
+     AND aip.charge_policy='COMPLIMENTARY'
+    WHERE wo.id=u.work_order_id
+  ) AS complimentary
+FROM stock_movements u
+WHERE u.work_order_id=? AND u.kind='USE'
+ORDER BY u.id
 """,
             w)) {
       var q = number(p, "quantity").subtract(number(p, "returned"));
       if (q.signum() < 0) throw conflict("반환 기록을 확인해 주세요.");
-      if (q.signum() > 0)
+      if (q.signum() > 0) {
+        boolean complimentary = Boolean.TRUE.equals(p.get("complimentary"));
+        UUID source = id(p, "id");
+        if (complimentary) complimentarySources.add(source);
         lines.add(
             line(
                 "PART",
-                id(p, "id"),
+                source,
                 p.get("part_name").toString(),
                 q,
                 p.get("unit").toString(),
-                number(p, "unit_price")));
+                complimentary ? BigDecimal.ZERO : number(p, "unit_price")));
+      }
     }
     BigDecimal total =
         lines.stream().map(l -> number(l, "amount")).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -171,7 +188,11 @@ FROM stock_movements u WHERE u.work_order_id=? AND u.kind='USE' ORDER BY u.id
         "fingerprint",
         fingerprint(lines),
         "has_zero_prices",
-        lines.stream().anyMatch(l -> number(l, "unit_price").signum() == 0));
+        lines.stream()
+            .anyMatch(
+                l ->
+                    number(l, "unit_price").signum() == 0
+                        && !complimentarySources.contains(id(l, "source_id"))));
   }
 
   @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -396,7 +417,7 @@ FROM invoices i JOIN work_orders w ON w.id=i.work_order_id ORDER BY i.issued_at 
       w.put(
           "items",
           rows(
-              "SELECT name,labor_price,done FROM work_order_items WHERE work_order_id=? ORDER BY"
+              "SELECT name,labor_price,done,quantity FROM work_order_items WHERE work_order_id=? ORDER BY"
                   + " name",
               w.get("id")));
       w.put(
