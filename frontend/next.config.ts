@@ -26,7 +26,7 @@ function apiBaseUrl() {
 }
 
 const config: NextConfig = {
-  output: "standalone",
+  output: process.env.VERCEL === "1" ? undefined : "standalone",
   poweredByHeader: false,
   async headers() {
     return [
