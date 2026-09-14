@@ -17,3 +17,13 @@
 test-results/
 playwright-report/
 /backups/
+# Local secrets / production-clone credentials
+/local-secrets/
+*.local.env
+*.local.ps1
+*.local.bat
+*.local.cmd
+# Local database dumps
+*.dump
+*.backup
+*.sql.gz

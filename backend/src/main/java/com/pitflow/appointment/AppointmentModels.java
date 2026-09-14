@@ -1,5 +1,6 @@
 package com.pitflow.appointment;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.*;
@@ -19,15 +20,66 @@ public final class AppointmentModels {
   public record CreateRequest(
       @NotNull UUID vehicleId,
       @NotNull UUID workBayId,
-      @NotEmpty @Size(max = 16) List<@NotNull UUID> serviceIds,
+      @Size(max = 16) List<@NotNull UUID> serviceIds,
+      @Size(max = 16) List<@Valid QuoteSelection> items,
+      @Pattern(regexp = "[0-9a-f]{64}") String quoteFingerprint,
       @NotNull OffsetDateTime startsAt,
-      @Size(max = 500) String notes) {}
+      @Size(max = 500) String notes) {
+    public CreateRequest(
+        UUID vehicleId,
+        UUID workBayId,
+        List<UUID> serviceIds,
+        OffsetDateTime startsAt,
+        String notes) {
+      this(vehicleId, workBayId, serviceIds, null, null, startsAt, notes);
+    }
+  }
+
+  public record QuoteSelection(@NotNull UUID serviceId, @Min(1) @Max(16) int quantity) {}
+
+  public record QuoteRequest(@NotEmpty @Size(max = 16) List<@Valid QuoteSelection> items) {}
+
+  public record QuoteAvailabilityRequest(
+      @NotNull UUID vehicleId,
+      @NotNull LocalDate date,
+      @NotEmpty @Size(max = 16) List<@Valid QuoteSelection> items) {}
+
+  public record QuotePart(
+      UUID partId,
+      String name,
+      String unit,
+      BigDecimal requiredQuantityPerService,
+      BigDecimal totalQuantity,
+      BigDecimal unitPrice,
+      BigDecimal amount,
+      String chargePolicy) {}
+
+  public record QuoteItem(
+      UUID serviceId,
+      String name,
+      int quantity,
+      BigDecimal laborUnitPrice,
+      BigDecimal laborAmount,
+      int durationMinutesPerService,
+      int durationMinutes,
+      List<QuotePart> parts,
+      BigDecimal partsAmount,
+      BigDecimal totalAmount) {}
+
+  public record Quote(
+      List<QuoteItem> items,
+      BigDecimal totalLaborPrice,
+      BigDecimal totalPartsPrice,
+      BigDecimal totalPrice,
+      int durationMinutes,
+      String fingerprint) {}
 
   public record StatusRequest(@NotNull Status status) {}
 
   public record Bay(UUID id, String name) {}
 
-  public record Item(UUID serviceId, String name, BigDecimal laborPrice, int durationMinutes) {}
+  public record Item(
+      UUID serviceId, String name, BigDecimal laborPrice, int durationMinutes, int quantity) {}
 
   public record Slot(OffsetDateTime startsAt, OffsetDateTime endsAt, List<Bay> availableBays) {}
 
@@ -82,6 +134,26 @@ public final class AppointmentModels {
       String notes,
       BigDecimal totalLaborPrice,
       int durationMinutes) {}
+
+  record QuoteServiceRow(
+      UUID id,
+      String name,
+      BigDecimal laborPrice,
+      int durationMinutes,
+      boolean requirementsConfirmed) {}
+
+  record QuoteRequirementRow(
+      UUID serviceId,
+      UUID partId,
+      String partName,
+      String unit,
+      BigDecimal requiredQuantity,
+      BigDecimal unitPrice,
+      boolean active,
+      boolean archived,
+      boolean quantityConfirmed) {}
+
+  record QuoteConflictRow(UUID serviceIdA, UUID serviceIdB, String reason) {}
 
   record Occupied(UUID bayId, UUID vehicleId, Instant startsAt) {}
 

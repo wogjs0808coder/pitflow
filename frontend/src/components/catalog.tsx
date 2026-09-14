@@ -3,26 +3,48 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Wrench, Clock3, Pencil, X } from "lucide-react";
 import { api, errorText, ServiceItem, won } from "@/lib/api";
 import { useAuth } from "./auth-provider";
+
+type AdminPart = {
+  id: string;
+  name: string;
+  unit: string;
+  unit_price: number;
+  active: boolean;
+  archived: boolean;
+};
+
+const WASHER_SERVICE_ID =
+  "f6b2e966-cf84-3576-9a3f-a64ebf1de473";
+
 export function Catalog({ admin = false }: { admin?: boolean }) {
   const { user } = useAuth();
   const allowed = !admin || user?.role === "ADMIN";
   const [items, setItems] = useState<ServiceItem[] | null>(null);
+  const [parts, setParts] = useState<AdminPart[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<ServiceItem | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
+
   const load = useCallback(async () => {
-    if (allowed)
-      setItems(
-        await api<ServiceItem[]>(
-          admin ? "/api/admin/services" : "/api/services",
-        ),
-      );
+    if (!allowed) return;
+    if (admin) {
+      const [services, availableParts] = await Promise.all([
+        api<ServiceItem[]>("/api/admin/services"),
+        api<AdminPart[]>("/api/admin/parts?includeArchived=false"),
+      ]);
+      setItems(services);
+      setParts(availableParts.filter((part) => part.active && !part.archived));
+    } else {
+      setItems(await api<ServiceItem[]>("/api/services"));
+    }
   }, [allowed, admin]);
+
   useEffect(() => {
     load().catch((e) => setError(errorText(e)));
   }, [load]);
+
   if (!allowed)
     return (
       <div className="empty-state">
@@ -30,23 +52,35 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
         <p>정비 항목 조회는 왼쪽 메뉴를 이용해 주세요.</p>
       </div>
     );
+
   function open(item: ServiceItem | null) {
     setEditing(item);
     setShowForm(true);
     setError("");
     setNotice("");
   }
+
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
     setError("");
     const f = new FormData(e.currentTarget);
+    const variableWasher = editing?.id === WASHER_SERVICE_ID;
+    const selectedParts = parts
+      .filter((part) => f.get(`part-${part.id}`) === "on")
+      .map((part) => ({
+        partId: part.id,
+        quantity: variableWasher
+          ? null
+          : String(f.get(`quantity-${part.id}`) ?? "1"),
+      }));
     const body = {
       name: String(f.get("name")).trim(),
       description: String(f.get("description")).trim(),
       laborPrice: Number(f.get("laborPrice")),
       durationMinutes: Number(f.get("durationMinutes")),
       active: f.get("active") === "on",
+      parts: selectedParts,
     };
     try {
       await api<ServiceItem>(
@@ -55,13 +89,14 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
       );
       await load();
       setShowForm(false);
-      setNotice("정비 항목을 저장했습니다.");
+      setNotice("정비 항목과 예상 부품 구성을 저장했습니다.");
     } catch (e) {
       setError(errorText(e));
     } finally {
       setBusy(false);
     }
   }
+
   return (
     <>
       <div className="page-heading">
@@ -72,8 +107,8 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
           <h1>{admin ? "정비 항목 관리" : "정비 항목"}</h1>
           <p>
             {admin
-              ? "공임, 소요 시간과 안내 여부를 관리하세요."
-              : "기본 공임과 예상 소요 시간을 확인하세요."}
+              ? "공임, 소요 시간과 예약 시 사용할 예상 부품 구성을 관리하세요."
+              : "예약 전 공임과 예상 부품비를 함께 확인하세요."}
           </p>
         </div>
         {admin && (
@@ -176,6 +211,53 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
                 defaultValue={editing?.description}
               />
             </label>
+            <div className="span-all work-panel">
+              <h3>예약 예상 부품</h3>
+              <p className="muted">
+                실제 정비 시 사용량은 재고 사용 기록으로 확정됩니다. 여기의 수량은 예약 견적용입니다.
+              </p>
+              {!parts.length ? (
+                <p className="muted">현재 연결할 수 있는 활성 부품이 없습니다. 부품 없이 저장할 수 있습니다.</p>
+              ) : (
+                <div className="service-options">
+                  {parts.map((part) => {
+                    const current = editing?.parts.find((value) => value.partId === part.id);
+                    return (
+                      <label className="service-option" key={part.id}>
+                        <input
+                          type="checkbox"
+                          name={`part-${part.id}`}
+                          defaultChecked={Boolean(current)}
+                        />
+                        <span>
+                          <strong>{part.name}</strong>
+                          <small>{won(part.unit_price)}/{part.unit}</small>
+                          <input
+                            name={`quantity-${part.id}`}
+                            aria-label={`${part.name} 필요 수량`}
+                            type="number"
+                            min="0.001"
+                            max="99999999999.999"
+                            step="0.001"
+                            disabled={editing?.id === WASHER_SERVICE_ID}
+                            defaultValue={
+                              editing?.id === WASHER_SERVICE_ID
+                                ? ""
+                                : current?.quantity ?? 1
+                            }
+                          />
+                          <small>
+                            {editing?.id === WASHER_SERVICE_ID
+                              ? `실제 제공량은 작업 시 입력 (${part.unit})`
+                              : `필요 수량 (${part.unit})`}
+                          </small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <div className="form-actions">
               <button
                 type="button"
@@ -193,8 +275,7 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
         </section>
       )}
       <div className="info-note">
-        표시 금액은 기본 공임입니다. 부품 비용은 별도이며, 최종 비용은 차량
-        상태와 작업 내용에 따라 달라집니다.
+        확정된 예상 금액은 기본 공임과 현재 부품 판매단가를 기준으로 계산됩니다. 최종 결제 금액은 실제 사용·반환된 부품 수량을 기준으로 다시 정산됩니다.
       </div>
       {!items && !error ? (
         <p role="status">정비 항목을 불러오는 중입니다…</p>
@@ -220,10 +301,28 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
                     <Clock3 size={16} /> 예상 {item.durationMinutes}분
                   </span>
                   <div className="price">
-                    <span>기본 공임</span>
-                    <strong>{won(item.laborPrice)}</strong>
+                    <span>{item.requirementsConfirmed ? "예상 총액" : "기본 공임"}</span>
+                    <strong>
+                      {won(
+                        item.requirementsConfirmed
+                          ? item.estimatedTotalPrice
+                          : item.laborPrice,
+                      )}
+                    </strong>
                   </div>
                 </div>
+                {item.requirementsConfirmed ? (
+                  <p className="muted">
+                    공임 {won(item.laborPrice)} · 예상 부품비 {won(item.estimatedPartsPrice)}
+                  </p>
+                ) : (
+                  <p className="muted">예상 부품 구성이 아직 확정되지 않았습니다.</p>
+                )}
+                {admin && item.parts.length > 0 && (
+                  <p className="muted">
+                    연결 부품: {item.parts.map((part) => `${part.name} ${part.quantity ?? "미확정"}${part.unit}`).join(" · ")}
+                  </p>
+                )}
                 {admin && (
                   <div className="card-actions">
                     <button

@@ -10,9 +10,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/admin")
 public class WorkController {
   private final WorkService s;
+  private final WorkQuantitySnapshotService quantities;
 
-  public WorkController(WorkService s) {
+  public WorkController(WorkService s, WorkQuantitySnapshotService quantities) {
     this.s = s;
+    this.quantities = quantities;
   }
 
   @GetMapping("/mechanics")
@@ -109,7 +111,10 @@ public class WorkController {
   @PostMapping("/work-orders/from-appointment")
   public Object receive(
       Principal p, @RequestHeader("Idempotency-Key") UUID key, @Valid @RequestBody Receive r) {
-    return s.receive(p.getName(), key, r);
+    @SuppressWarnings("unchecked")
+    var received = (Map<String, Object>) s.receive(p.getName(), key, r);
+    UUID workId = quantities.sync(received);
+    return s.detail(p.getName(), workId, true);
   }
 
   @PatchMapping("/work-orders/{id}/status")

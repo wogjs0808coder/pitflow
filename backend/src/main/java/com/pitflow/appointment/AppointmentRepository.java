@@ -42,12 +42,76 @@ public class AppointmentRepository {
   List<Item> catalog(List<UUID> ids) {
     String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
     return db.query(
-        "SELECT id AS service_item_id, name, labor_price, duration_minutes FROM service_items "
-            + "WHERE active = TRUE AND id IN ("
+        "SELECT id AS service_item_id, name, labor_price, duration_minutes, 1 AS quantity FROM"
+            + " service_items WHERE active = TRUE AND id IN ("
             + placeholders
             + ") ORDER BY id",
         AppointmentRepository::item,
         ids.toArray());
+  }
+
+  List<QuoteServiceRow> quoteServices(List<UUID> ids) {
+    if (ids.isEmpty()) return List.of();
+    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+    return db.query(
+        "SELECT id,name,labor_price,duration_minutes,requirements_confirmed FROM service_items"
+            + " WHERE active=TRUE AND id IN ("
+            + placeholders
+            + ") ORDER BY id",
+        (r, n) ->
+            new QuoteServiceRow(
+                r.getObject("id", UUID.class),
+                r.getString("name"),
+                r.getBigDecimal("labor_price"),
+                r.getInt("duration_minutes"),
+                r.getBoolean("requirements_confirmed")),
+        ids.toArray());
+  }
+
+  List<QuoteRequirementRow> quoteRequirements(List<UUID> ids) {
+    if (ids.isEmpty()) return List.of();
+    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+    return db.query(
+        "SELECT r.service_id,p.id AS part_id,p.name AS part_name,p.unit,r.required_quantity,"
+            + "p.unit_price,p.active,p.archived,r.quantity_confirmed FROM service_part_requirements r"
+            + " JOIN parts p ON p.id=r.part_id WHERE r.service_id IN ("
+            + placeholders
+            + ") ORDER BY r.service_id,p.id",
+        (r, n) ->
+            new QuoteRequirementRow(
+                r.getObject("service_id", UUID.class),
+                r.getObject("part_id", UUID.class),
+                r.getString("part_name"),
+                r.getString("unit"),
+                r.getBigDecimal("required_quantity"),
+                r.getBigDecimal("unit_price"),
+                r.getBoolean("active"),
+                r.getBoolean("archived"),
+                r.getBoolean("quantity_confirmed")),
+        ids.toArray());
+  }
+
+  List<QuoteConflictRow> quoteConflicts(List<UUID> ids) {
+    if (ids.size() < 2) return List.of();
+    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+    Object[] args = new Object[ids.size() * 2];
+    for (int i = 0; i < ids.size(); i++) {
+      args[i] = ids.get(i);
+      args[i + ids.size()] = ids.get(i);
+    }
+    return db.query(
+        "SELECT service_id_a,service_id_b,reason FROM service_selection_conflicts"
+            + " WHERE service_id_a IN ("
+            + placeholders
+            + ") AND service_id_b IN ("
+            + placeholders
+            + ") ORDER BY service_id_a,service_id_b",
+        (r, n) ->
+            new QuoteConflictRow(
+                r.getObject("service_id_a", UUID.class),
+                r.getObject("service_id_b", UUID.class),
+                r.getString("reason")),
+        args);
   }
 
   List<Occupied> occupied(OffsetDateTime from, OffsetDateTime to) {
@@ -72,17 +136,32 @@ public class AppointmentRepository {
       List<Item> items,
       String notes,
       Instant now) {
-    int minutes = items.stream().mapToInt(Item::durationMinutes).sum();
+    insert(id, customer, car, bay, start, items, null, notes, now);
+  }
+
+  void insert(
+      UUID id,
+      UUID customer,
+      Car car,
+      UUID bay,
+      OffsetDateTime start,
+      List<Item> items,
+      Quote quote,
+      String notes,
+      Instant now) {
+    int minutes =
+        items.stream().mapToInt(item -> item.durationMinutes() * item.quantity()).sum();
     var total =
         items.stream()
-            .map(Item::laborPrice)
+            .map(item -> item.laborPrice().multiply(java.math.BigDecimal.valueOf(item.quantity())))
             .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     var timestamp = now.atOffset(ZoneOffset.UTC);
     db.update(
         """
 INSERT INTO appointments (id, customer_id, vehicle_id, work_bay_id, plate_number, vehicle_label,
-starts_at, ends_at, status, notes, total_labor_price, duration_minutes, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
+starts_at, ends_at, status, notes, total_labor_price, duration_minutes, quote_fingerprint,
+created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
 """,
         id,
         customer,
@@ -95,19 +174,50 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
         notes,
         total,
         minutes,
+        quote == null ? null : quote.fingerprint(),
         timestamp,
         timestamp);
+
+    Map<UUID, QuoteItem> quoted = new HashMap<>();
+    if (quote != null) {
+      for (QuoteItem quoteItem : quote.items()) quoted.put(quoteItem.serviceId(), quoteItem);
+    }
+
     for (Item item : items) {
+      boolean captured = quote != null && quoted.containsKey(item.serviceId());
       db.update(
           "INSERT INTO appointment_items (appointment_id, service_item_id, name, labor_price,"
-              + " duration_minutes) VALUES (?, ?, ?, ?, ?)",
+              + " duration_minutes, quantity, parts_quote_captured) VALUES (?, ?, ?, ?, ?, ?, ?)",
           id,
           item.serviceId(),
           item.name(),
           item.laborPrice(),
-          item.durationMinutes());
+          item.durationMinutes(),
+          item.quantity(),
+          captured);
+      if (captured) {
+        for (QuotePart part : quoted.get(item.serviceId()).parts()) {
+          db.update(
+              """
+INSERT INTO appointment_item_parts
+(appointment_id, service_item_id, part_id, part_name, unit,
+ required_quantity_per_service, total_quantity, unit_price, amount, charge_policy)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+""",
+              id,
+              item.serviceId(),
+              part.partId(),
+              part.name(),
+              part.unit(),
+              part.requiredQuantityPerService(),
+              part.totalQuantity(),
+              part.unitPrice(),
+              part.amount(),
+              part.chargePolicy());
+        }
+      }
     }
-    // Insert in chronological order. A later conflicting slot rolls back the entire reservation.
+
     for (int minute = 0; minute < minutes; minute += BookingPolicy.SLOT_MINUTES) {
       db.update(
           "INSERT INTO slot_allocations (appointment_id, work_bay_id, vehicle_id, starts_at) VALUES"
@@ -136,7 +246,6 @@ FROM appointments a JOIN work_bays b ON b.id = a.work_bay_id JOIN users u ON u.i
   }
 
   boolean lock(UUID id, UUID customer) {
-    // Lock only appointments, not joined tables; serialize competing state changes.
     return !db.query(
             "SELECT id FROM appointments WHERE id = ?"
                 + (customer == null ? "" : " AND customer_id = ?")
@@ -190,7 +299,8 @@ FROM appointments a JOIN work_bays b ON b.id = a.work_bay_id JOIN users u ON u.i
         r.getObject("service_item_id", UUID.class),
         r.getString("name"),
         r.getBigDecimal("labor_price"),
-        r.getInt("duration_minutes"));
+        r.getInt("duration_minutes"),
+        r.getInt("quantity"));
   }
 
   private static OffsetDateTime time(ResultSet r, String field) throws SQLException {

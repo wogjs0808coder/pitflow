@@ -56,7 +56,11 @@ class PhaseFourIntegrationTest {
                 .asText());
     serviceItem = UUID.randomUUID();
     db.update(
-        "INSERT INTO service_items VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        """
+        INSERT INTO service_items
+          (id,name,description,labor_price,duration_minutes,active,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        """,
         serviceItem,
         "테스트 정비",
         "설명",
@@ -106,7 +110,16 @@ class PhaseFourIntegrationTest {
         start.plusMinutes(30),
         "VISITED");
     db.update(
-        "INSERT INTO appointment_items VALUES (?,?,?,?,?)", id, serviceItem, "예약 당시 정비", 20000, 30);
+        """
+        INSERT INTO appointment_items
+          (appointment_id, service_item_id, name, labor_price, duration_minutes)
+        VALUES (?,?,?,?,?)
+        """,
+        id,
+        serviceItem,
+        "예약 당시 정비",
+        20000,
+        30);
     return id;
   }
 

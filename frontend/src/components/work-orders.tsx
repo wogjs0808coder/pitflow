@@ -475,7 +475,13 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                   {detail.items.map((i) => (
                     <li key={i.id}>
                       <span>
-                        {i.name} · 공임 {won(i.labor_price)}
+                        {i.name}
+                        {i.quantity > 1 ? ` × ${i.quantity}` : ""}
+                        {" · "}
+                        단위 공임 {won(i.labor_price)}
+                        {i.quantity > 1
+                          ? ` · 공임 합계 ${won(i.labor_price * i.quantity)}`
+                          : ""}
                       </span>
                       {admin ? (
                         <label>
@@ -655,13 +661,13 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                               : ""}
                             {p.name} · 재고 {String(p.quantity)} {p.unit}
                             <input
-                              name={p.id}
-                              type="number"
-                              min="0.001"
-                              max="99999999999.999"
-                              step="0.001"
-                              placeholder="사용 수량"
-                            />
+                            name={p.id}
+                            type="number"
+                            min={p.unit === "EA" ? "1" : "0.001"}
+                            max="99999999999.999"
+                            step={p.unit === "EA" ? "1" : "0.001"}
+                            placeholder="사용 수량"
+                          />
                           </label>
                         ))}
                       <label>
@@ -714,8 +720,8 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                               <input
                                 name="quantity"
                                 type="number"
-                                min="0.001"
-                                step="0.001"
+                                min={m.unit === "EA" ? "1" : "0.001"}
+                                step={m.unit === "EA" ? "1" : "0.001"}
                                 max={remaining(m, detail.movements)}
                                 required
                               />

@@ -4,6 +4,7 @@ export type WorkStatus =
   | "WAITING_PARTS"
   | "COMPLETED"
   | "CANCELLED";
+
 export const workLabel: Record<WorkStatus, string> = {
   RECEIVED: "입고",
   IN_PROGRESS: "작업 중",
@@ -11,6 +12,7 @@ export const workLabel: Record<WorkStatus, string> = {
   COMPLETED: "완료",
   CANCELLED: "취소",
 };
+
 export const workTransitions: Record<WorkStatus, WorkStatus[]> = {
   RECEIVED: ["IN_PROGRESS", "CANCELLED"],
   IN_PROGRESS: ["WAITING_PARTS", "COMPLETED", "CANCELLED"],
@@ -18,13 +20,16 @@ export const workTransitions: Record<WorkStatus, WorkStatus[]> = {
   COMPLETED: [],
   CANCELLED: [],
 };
+
 export type Decimal = string | number;
+
 export type Mechanic = {
   id: string;
   code: string;
   name: string;
   active: boolean;
 };
+
 export type Part = {
   id: string;
   sku: string;
@@ -38,6 +43,7 @@ export type Part = {
   archived: boolean;
   services?: { service_id: string; name: string }[];
 };
+
 export type Movement = {
   id: string;
   part_id?: string;
@@ -51,6 +57,7 @@ export type Movement = {
   reason: string;
   created_at: string;
 };
+
 export const movementLabel: Record<Movement["kind"], string> = {
   RECEIPT: "입고",
   USE: "사용",
@@ -58,6 +65,7 @@ export const movementLabel: Record<Movement["kind"], string> = {
   ADJUST_IN: "실사 보정 증가",
   ADJUST_OUT: "실사 보정 감소",
 };
+
 export type Work = {
   id: string;
   appointment_id: string;
@@ -71,32 +79,57 @@ export type Work = {
   received_at: string;
   released_at: string | null;
 };
+
 export type WorkDetail = Work & {
-  items: { id: string; name: string; labor_price: number; done: boolean }[];
-  events: { event_type: string; detail: string; created_at: string }[];
+  items: {
+    id: string;
+    name: string;
+    labor_price: number;
+    quantity: number;
+    done: boolean;
+  }[];
+
+  events: {
+    event_type: string;
+    detail: string;
+    created_at: string;
+  }[];
+
   movements: Movement[];
+
   suggested_parts?: Pick<
     Part,
     "id" | "name" | "quantity" | "unit" | "active"
   >[];
 };
+
 export const localTime = (value: string) =>
   new Intl.DateTimeFormat("ko-KR", {
     timeZone: "Asia/Seoul",
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
+
 export function milli(value: Decimal): bigint {
   const [whole, fraction = ""] = String(value).split(".");
+
   return (
-    BigInt(whole) * BigInt(1000) + BigInt(fraction.padEnd(3, "0").slice(0, 3))
+    BigInt(whole) * BigInt(1000) +
+    BigInt(fraction.padEnd(3, "0").slice(0, 3))
   );
 }
-export function remaining(use: Movement, movements: Movement[]): string {
+
+export function remaining(
+  use: Movement,
+  movements: Movement[],
+): string {
   const value =
     milli(use.quantity) -
     movements
       .filter((m) => m.original_use_id === use.id)
       .reduce((n, m) => n + milli(m.quantity), BigInt(0));
-  return `${value / BigInt(1000)}.${String(value % BigInt(1000)).padStart(3, "0")}`;
+
+  return `${value / BigInt(1000)}.${String(
+    value % BigInt(1000),
+  ).padStart(3, "0")}`;
 }

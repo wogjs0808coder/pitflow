@@ -25,6 +25,9 @@ public class WorkService {
   private final TransactionTemplate tx;
   private final Clock clock;
   private static final BigDecimal MAX_QUANTITY = new BigDecimal("99999999999.999");
+  private static final UUID WASHER_SERVICE =
+      UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
+  private static final String WASHER_SKU = "PF-WASHER";
 
   public WorkService(
       JdbcTemplate db, ObjectMapper json, PlatformTransactionManager manager, Clock clock) {
@@ -525,7 +528,48 @@ public class WorkService {
         || q.compareTo(MAX_QUANTITY) > 0) throw bad("수량은 0보다 큰 소수 셋째 자리까지 입력해 주세요.");
     return q.stripTrailingZeros();
   }
+  private void validateUnitQuantity(Map<String, Object> part, BigDecimal quantity) {
+    if ("EA".equals(part.get("unit"))
+        && quantity.stripTrailingZeros().scale() > 0) {
+      throw bad("EA 단위 부품은 정수 수량만 입력할 수 있습니다.");
+    }
+  }
+  private void validateWasherUse(UUID work, Map<String, Object> part) {
+    if (!WASHER_SKU.equals(part.get("sku"))) return;
 
+    Integer washerServiceCount =
+        db.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM work_order_items
+            WHERE work_order_id=?
+              AND service_item_id=?
+            """,
+            Integer.class,
+            work,
+            WASHER_SERVICE);
+
+    if (washerServiceCount == null || washerServiceCount == 0) {
+      throw conflict("워셔액은 워셔액 보충 서비스가 포함된 작업에서만 사용할 수 있습니다.");
+    }
+
+    Integer previousUses =
+        db.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM stock_movements
+            WHERE work_order_id=?
+              AND part_id=?
+              AND kind='USE'
+            """,
+            Integer.class,
+            work,
+            part.get("id"));
+
+    if (previousUses != null && previousUses > 0) {
+      throw conflict("워셔액 보충은 한 작업에서 한 번만 기록할 수 있습니다.");
+    }
+  }
   private void movement(
       UUID operation,
       UUID actor,
@@ -636,6 +680,9 @@ public class WorkService {
           var locked = new LinkedHashMap<UUID, Map<String, Object>>();
           for (var line : lines) {
             var p = lockPart(line.partId());
+            validateUnitQuantity(p, line.quantity());
+            validateWasherUse(work, p);
+
             if (!active(p)) throw conflict("비활성 부품은 사용할 수 없습니다.");
             if (number(p, "quantity").compareTo(line.quantity()) < 0)
               throw conflict(p.get("name") + ": 재고가 부족합니다.");

@@ -12,6 +12,16 @@ export type Vehicle = {
   modelYear: number;
   mileage: number;
 };
+export type ServicePartRequirement = {
+  partId: string;
+  name: string;
+  unit: string;
+  quantity: number | null;
+  unitPrice: number;
+  amount: number;
+  active: boolean;
+  archived: boolean;
+};
 export type ServiceItem = {
   id: string;
   name: string;
@@ -19,6 +29,10 @@ export type ServiceItem = {
   laborPrice: number;
   durationMinutes: number;
   active: boolean;
+  requirementsConfirmed: boolean;
+  parts: ServicePartRequirement[];
+  estimatedPartsPrice: number;
+  estimatedTotalPrice: number;
 };
 export class ApiError extends Error {
   constructor(
@@ -73,8 +87,7 @@ async function fetchApi(
         response.ok &&
         response.status !== 204 &&
         !contentType.toLowerCase().includes("application/json");
-      const retryable =
-        RETRYABLE_STATUS.has(response.status) || unexpectedSuccess;
+      const retryable = RETRYABLE_STATUS.has(response.status) || unexpectedSuccess;
       if (retryable && safe && attempt < attempts - 1) {
         await wait(RETRY_DELAYS_MS[attempt], options.signal);
         continue;
@@ -105,9 +118,7 @@ async function fetchApi(
 async function errorBody(response: Response) {
   if (!(response.headers.get("content-type") ?? "").includes("application/json"))
     return {} as { message?: string; fields?: Record<string, string> };
-  return response
-    .json()
-    .catch(() => ({})) as Promise<{
+  return response.json().catch(() => ({})) as Promise<{
     message?: string;
     fields?: Record<string, string>;
   }>;
@@ -120,7 +131,6 @@ export async function api<T>(
   const headers = new Headers(options.headers);
   const method = (options.method || "GET").toUpperCase();
   if (!SAFE_METHODS.has(method)) {
-    // A fresh token is required after login/logout rotates the session security context.
     const response = await fetchApi(
       "/api/auth/csrf",
       {
