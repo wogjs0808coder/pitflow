@@ -24,7 +24,16 @@ public final class AppointmentModels {
       @Size(max = 16) List<@Valid QuoteSelection> items,
       @Pattern(regexp = "[0-9a-f]{64}") String quoteFingerprint,
       @NotNull OffsetDateTime startsAt,
-      @Size(max = 500) String notes) {}
+      @Size(max = 500) String notes) {
+    public CreateRequest(
+        UUID vehicleId,
+        UUID workBayId,
+        List<UUID> serviceIds,
+        OffsetDateTime startsAt,
+        String notes) {
+      this(vehicleId, workBayId, serviceIds, null, null, startsAt, notes);
+    }
+  }
 
   public record QuoteSelection(@NotNull UUID serviceId, @Min(1) @Max(16) int quantity) {}
 
