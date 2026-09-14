@@ -20,7 +20,9 @@ public final class AppointmentModels {
   public record CreateRequest(
       @NotNull UUID vehicleId,
       @NotNull UUID workBayId,
-      @NotEmpty @Size(max = 16) List<@NotNull UUID> serviceIds,
+      @Size(max = 16) List<@NotNull UUID> serviceIds,
+      @Size(max = 16) List<@Valid QuoteSelection> items,
+      @Pattern(regexp = "[0-9a-f]{64}") String quoteFingerprint,
       @NotNull OffsetDateTime startsAt,
       @Size(max = 500) String notes) {}
 
