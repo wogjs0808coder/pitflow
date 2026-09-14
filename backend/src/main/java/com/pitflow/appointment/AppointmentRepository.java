@@ -134,6 +134,7 @@ public class AppointmentRepository {
       UUID bay,
       OffsetDateTime start,
       List<Item> items,
+      Quote quote,
       String notes,
       Instant now) {
     int minutes =
@@ -146,8 +147,9 @@ public class AppointmentRepository {
     db.update(
         """
 INSERT INTO appointments (id, customer_id, vehicle_id, work_bay_id, plate_number, vehicle_label,
-starts_at, ends_at, status, notes, total_labor_price, duration_minutes, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
+starts_at, ends_at, status, notes, total_labor_price, duration_minutes, quote_fingerprint,
+created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
 """,
         id,
         customer,
@@ -160,19 +162,50 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
         notes,
         total,
         minutes,
+        quote == null ? null : quote.fingerprint(),
         timestamp,
         timestamp);
+
+    Map<UUID, QuoteItem> quoted = new HashMap<>();
+    if (quote != null) {
+      for (QuoteItem quoteItem : quote.items()) quoted.put(quoteItem.serviceId(), quoteItem);
+    }
+
     for (Item item : items) {
+      boolean captured = quote != null && quoted.containsKey(item.serviceId());
       db.update(
           "INSERT INTO appointment_items (appointment_id, service_item_id, name, labor_price,"
-              + " duration_minutes, quantity) VALUES (?, ?, ?, ?, ?, ?)",
+              + " duration_minutes, quantity, parts_quote_captured) VALUES (?, ?, ?, ?, ?, ?, ?)",
           id,
           item.serviceId(),
           item.name(),
           item.laborPrice(),
           item.durationMinutes(),
-          item.quantity());
+          item.quantity(),
+          captured);
+      if (captured) {
+        for (QuotePart part : quoted.get(item.serviceId()).parts()) {
+          db.update(
+              """
+INSERT INTO appointment_item_parts
+(appointment_id, service_item_id, part_id, part_name, unit,
+ required_quantity_per_service, total_quantity, unit_price, amount, charge_policy)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+""",
+              id,
+              item.serviceId(),
+              part.partId(),
+              part.name(),
+              part.unit(),
+              part.requiredQuantityPerService(),
+              part.totalQuantity(),
+              part.unitPrice(),
+              part.amount(),
+              part.chargePolicy());
+        }
+      }
     }
+
     for (int minute = 0; minute < minutes; minute += BookingPolicy.SLOT_MINUTES) {
       db.update(
           "INSERT INTO slot_allocations (appointment_id, work_bay_id, vehicle_id, starts_at) VALUES"
