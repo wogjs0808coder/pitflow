@@ -16,7 +16,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
-  const { refresh } = useAuth();
+  const { error: serviceError, loading: serviceLoading, refresh } = useAuth();
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
@@ -92,6 +92,19 @@ export function AuthForm({ register = false }: { register?: boolean }) {
               ? "차량 관리를 시작할 계정을 만들어 주세요."
               : "예약 내역과 차량 정비 상태를 확인하세요."}
           </p>
+          {serviceError && (
+            <div className="notice" role="status">
+              <p>{serviceError}</p>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={serviceLoading}
+                onClick={() => void refresh()}
+              >
+                {serviceLoading ? "서버 확인 중…" : "서버 연결 다시 확인"}
+              </button>
+            </div>
+          )}
           <form onSubmit={submit} className="stack-form">
             {register && (
               <label>

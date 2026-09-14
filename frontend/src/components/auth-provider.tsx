@@ -20,6 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       const value = await api<User>("/api/auth/me");
       setUser(value);
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function logout() {
     await api<void>("/api/auth/logout", { method: "POST" });
     setUser(null);
+    setError("");
   }
   return (
     <Context.Provider value={{ user, loading, error, refresh, logout }}>

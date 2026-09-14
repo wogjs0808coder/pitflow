@@ -27,20 +27,109 @@ export class ApiError extends Error {
     public fields: Record<string, string> = {},
   ) {
     super(message);
+    this.name = "ApiError";
   }
 }
+
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const RETRY_DELAYS_MS = [1500, 3000, 6000];
+const REQUEST_TIMEOUT_MS = 20000;
+
+function wait(ms: number, signal?: AbortSignal | null) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const aborted = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", aborted);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+async function fetchApi(
+  path: string,
+  options: RequestInit,
+  method: string,
+): Promise<Response> {
+  const safe = SAFE_METHODS.has(method);
+  const attempts = safe ? RETRY_DELAYS_MS.length + 1 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      const signal = options.signal
+        ? AbortSignal.any([options.signal, timeout])
+        : timeout;
+      const response = await fetch(path, { ...options, signal });
+      const contentType = response.headers.get("content-type") ?? "";
+      const unexpectedSuccess =
+        response.ok &&
+        response.status !== 204 &&
+        !contentType.toLowerCase().includes("application/json");
+      const retryable =
+        RETRYABLE_STATUS.has(response.status) || unexpectedSuccess;
+      if (retryable && safe && attempt < attempts - 1) {
+        await wait(RETRY_DELAYS_MS[attempt], options.signal);
+        continue;
+      }
+      if (unexpectedSuccess) {
+        throw new ApiError(
+          503,
+          "서버를 준비하는 중입니다. 잠시 후 다시 시도해 주세요.",
+        );
+      }
+      return response;
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (error instanceof ApiError) throw error;
+      if (safe && attempt < attempts - 1) {
+        await wait(RETRY_DELAYS_MS[attempt], options.signal);
+        continue;
+      }
+      throw new ApiError(
+        0,
+        "서버를 준비 중이거나 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+      );
+    }
+  }
+  throw new ApiError(0, "서버에 연결하지 못했습니다.");
+}
+
+async function errorBody(response: Response) {
+  if (!(response.headers.get("content-type") ?? "").includes("application/json"))
+    return {} as { message?: string; fields?: Record<string, string> };
+  return response
+    .json()
+    .catch(() => ({})) as Promise<{
+    message?: string;
+    fields?: Record<string, string>;
+  }>;
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(options.headers);
   const method = (options.method || "GET").toUpperCase();
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+  if (!SAFE_METHODS.has(method)) {
     // A fresh token is required after login/logout rotates the session security context.
-    const response = await fetch("/api/auth/csrf", {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
+    const response = await fetchApi(
+      "/api/auth/csrf",
+      {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: options.signal,
+      },
+      "GET",
+    );
     if (!response.ok)
       throw new ApiError(
         response.status,
@@ -54,14 +143,18 @@ export async function api<T>(
   }
   if (options.body && !(options.body instanceof URLSearchParams))
     headers.set("Content-Type", "application/json");
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    credentials: "same-origin",
-    cache: "no-store",
-  });
+  const response = await fetchApi(
+    path,
+    {
+      ...options,
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+    },
+    method,
+  );
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
+    const body = await errorBody(response);
     if (
       response.status === 401 &&
       !path.startsWith("/api/auth/") &&
@@ -70,11 +163,17 @@ export async function api<T>(
       window.location.assign("/login");
     throw new ApiError(
       response.status,
-      body.message || "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-      body.fields,
+      body.message ||
+        (RETRYABLE_STATUS.has(response.status)
+          ? "서버를 준비하는 중입니다. 잠시 후 다시 시도해 주세요."
+          : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."),
+      body.fields ?? {},
     );
   }
-  return response.status === 204 ? (undefined as T) : response.json();
+  if (response.status === 204) return undefined as T;
+  return response.json().catch(() => {
+    throw new ApiError(502, "서버 응답 형식을 확인할 수 없습니다.");
+  });
 }
 export function errorText(error: unknown): string {
   if (error instanceof ApiError && Object.keys(error.fields || {}).length)

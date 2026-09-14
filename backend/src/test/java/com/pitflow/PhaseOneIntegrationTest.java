@@ -81,6 +81,18 @@ class PhaseOneIntegrationTest {
   }
 
   @Test
+  void livenessAndDatabaseReadinessArePublicButDistinct() throws Exception {
+    mvc.perform(get("/api/health"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("UP"))
+        .andExpect(jsonPath("$.database").doesNotExist());
+    mvc.perform(get("/api/health/ready"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("READY"))
+        .andExpect(jsonPath("$.database").value("UP"));
+  }
+
+  @Test
   void registrationHashesPasswordAndCannotAssignAdmin() throws Exception {
     String body =
         "{\"name\":\"신규 고객\",\"email\":\"NEW@example.com\",\"password\":\"" + PASSWORD + "\"}";

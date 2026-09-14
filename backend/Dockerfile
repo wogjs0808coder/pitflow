@@ -9,5 +9,6 @@ WORKDIR /app
 RUN groupadd --system pitflow && useradd --system --gid pitflow pitflow
 COPY --from=build --chown=pitflow:pitflow /app/target/pitflow-api-0.1.0.jar app.jar
 USER pitflow
+ENV JAVA_TOOL_OPTIONS="-Xms64m -Xmx256m -XX:MaxMetaspaceSize=128m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]

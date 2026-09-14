@@ -42,6 +42,7 @@ public class SecurityConfig {
                     "/api/auth/register",
                     "/api/auth/login",
                     "/api/health",
+                    "/api/health/ready",
                     "/error")
                 .permitAll()
                 .requestMatchers("/api/admin/**")
