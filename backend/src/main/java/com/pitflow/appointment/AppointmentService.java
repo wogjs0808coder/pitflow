@@ -4,7 +4,9 @@ import static com.pitflow.appointment.AppointmentModels.*;
 
 import com.pitflow.common.ApiException;
 import com.pitflow.user.UserRepository;
-import java.math.BigDecimal;
+import java.math.*;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -16,6 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional(readOnly = true)
 public class AppointmentService {
+  private static final UUID TIRE_SERVICE =
+      UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID WASHER_SERVICE =
+      UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
+
   private final AppointmentRepository repository;
   private final UserRepository users;
   private final BookingPolicy policy;
@@ -33,6 +40,154 @@ public class AppointmentService {
 
   public List<Bay> bays() {
     return repository.bays();
+  }
+
+  public Quote quote(QuoteRequest request) {
+    if (request == null || request.items() == null || request.items().isEmpty()) {
+      throw bad("견적할 정비 항목을 선택해 주세요.");
+    }
+    var selections = request.items();
+    var ids = selections.stream().map(QuoteSelection::serviceId).toList();
+    if (ids.stream().anyMatch(Objects::isNull) || new HashSet<>(ids).size() != ids.size()) {
+      throw bad("정비 항목은 중복 없이 선택해 주세요.");
+    }
+    for (var selection : selections) {
+      if (selection.quantity() < 1 || selection.quantity() > 16) {
+        throw bad("정비 수량은 1~16 범위로 선택해 주세요.");
+      }
+      if (selection.quantity() != 1 && !TIRE_SERVICE.equals(selection.serviceId())) {
+        throw bad("현재 수량 선택은 타이어 교체 항목에서만 지원합니다.");
+      }
+    }
+
+    var services = repository.quoteServices(ids);
+    if (services.size() != ids.size()) {
+      throw bad("선택한 정비 항목이 없거나 더 이상 예약할 수 없습니다. 다시 선택해 주세요.");
+    }
+    var serviceById = new HashMap<UUID, QuoteServiceRow>();
+    for (var service : services) {
+      if (!service.requirementsConfirmed()) {
+        throw conflict("부품 구성이 아직 확정되지 않은 정비 항목이 있습니다. 관리자에게 문의해 주세요.");
+      }
+      serviceById.put(service.id(), service);
+    }
+
+    var conflicts = repository.quoteConflicts(ids);
+    if (!conflicts.isEmpty()) {
+      throw conflict(conflicts.get(0).reason());
+    }
+
+    var requirements = repository.quoteRequirements(ids);
+    var requirementsByService = new HashMap<UUID, List<QuoteRequirementRow>>();
+    for (var requirement : requirements) {
+      if (!requirement.quantityConfirmed()
+          || requirement.requiredQuantity() == null
+          || requirement.requiredQuantity().signum() <= 0) {
+        throw conflict("부품 필요 수량이 확정되지 않은 정비 항목이 있습니다. 관리자에게 문의해 주세요.");
+      }
+      if (!requirement.active() || requirement.archived()) {
+        throw conflict("견적에 필요한 부품이 현재 비활성 상태입니다. 관리자에게 문의해 주세요.");
+      }
+      requirementsByService
+          .computeIfAbsent(requirement.serviceId(), ignored -> new ArrayList<>())
+          .add(requirement);
+    }
+
+    List<QuoteItem> result = new ArrayList<>();
+    BigDecimal laborTotal = BigDecimal.ZERO;
+    BigDecimal partsTotal = BigDecimal.ZERO;
+    int durationTotal = 0;
+    StringBuilder canonical = new StringBuilder("pitflow-quote-v1|");
+
+    for (var selection : selections) {
+      var service = serviceById.get(selection.serviceId());
+      int quantity = selection.quantity();
+      BigDecimal laborAmount =
+          money(service.laborPrice().multiply(BigDecimal.valueOf(quantity)));
+      int duration = Math.multiplyExact(service.durationMinutes(), quantity);
+      List<QuotePart> quotedParts = new ArrayList<>();
+      BigDecimal serviceParts = BigDecimal.ZERO;
+      boolean complimentary = WASHER_SERVICE.equals(service.id());
+
+      for (var requirement :
+          requirementsByService.getOrDefault(service.id(), List.of())) {
+        BigDecimal totalQuantity =
+            requirement.requiredQuantity().multiply(BigDecimal.valueOf(quantity));
+        BigDecimal amount =
+            complimentary
+                ? BigDecimal.ZERO
+                : money(requirement.unitPrice().multiply(totalQuantity));
+        quotedParts.add(
+            new QuotePart(
+                requirement.partId(),
+                requirement.partName(),
+                requirement.unit(),
+                requirement.requiredQuantity(),
+                totalQuantity,
+                requirement.unitPrice(),
+                amount,
+                complimentary ? "COMPLIMENTARY" : "STANDARD"));
+        serviceParts = serviceParts.add(amount);
+        canonical
+            .append(requirement.partId())
+            .append(':')
+            .append(requirement.requiredQuantity().stripTrailingZeros().toPlainString())
+            .append(':')
+            .append(requirement.unitPrice().toPlainString())
+            .append(':')
+            .append(complimentary ? 'C' : 'S')
+            .append('|');
+      }
+
+      BigDecimal totalAmount = money(laborAmount.add(serviceParts));
+      result.add(
+          new QuoteItem(
+              service.id(),
+              service.name(),
+              quantity,
+              service.laborPrice(),
+              laborAmount,
+              service.durationMinutes(),
+              duration,
+              List.copyOf(quotedParts),
+              serviceParts,
+              totalAmount));
+      laborTotal = laborTotal.add(laborAmount);
+      partsTotal = partsTotal.add(serviceParts);
+      durationTotal = Math.addExact(durationTotal, duration);
+      canonical
+          .append(service.id())
+          .append(':')
+          .append(quantity)
+          .append(':')
+          .append(service.laborPrice().toPlainString())
+          .append(':')
+          .append(service.durationMinutes())
+          .append('|');
+    }
+
+    if (durationTotal > 480) {
+      throw bad("한 번에 예약할 수 있는 정비 시간은 최대 480분입니다.");
+    }
+    if (ids.contains(WASHER_SERVICE)) {
+      boolean hasPaidService =
+          result.stream()
+              .anyMatch(
+                  item ->
+                      !WASHER_SERVICE.equals(item.serviceId())
+                          && item.totalAmount().compareTo(BigDecimal.ZERO) > 0);
+      if (!hasPaidService) {
+        throw bad("워셔액 보충 서비스는 유상 정비 항목과 함께 이용할 수 있습니다.");
+      }
+    }
+
+    return new Quote(
+        List.copyOf(result),
+        money(laborTotal),
+        money(partsTotal),
+        money(laborTotal.add(partsTotal)),
+        durationTotal,
+        fingerprint(canonical.toString()));
   }
 
   private UUID customer(String email) {
@@ -108,8 +263,6 @@ public class AppointmentService {
   public View create(String email, CreateRequest request) {
     policy.lockCalendar();
     UUID customer = customer(email);
-    // Serialize reservations and deletion for this car. Different customers can still book
-    // concurrently.
     var car = car(request.vehicleId(), customer, true);
     var items = selection(request.serviceIds());
     if (repository.bays().stream().noneMatch(b -> b.id().equals(request.workBayId()))) {
@@ -131,8 +284,6 @@ public class AppointmentService {
           request.notes() == null ? "" : request.notes().strip(),
           policy.now());
     } catch (DuplicateKeyException ex) {
-      // Throw out of the transactional boundary; never continue after a failed PostgreSQL
-      // statement.
       throw conflict("선택한 시간에 다른 예약이 있습니다. 예약 가능한 시간을 다시 조회해 주세요.");
     }
     return detail(email, id);
@@ -203,7 +354,6 @@ public class AppointmentService {
     List<Status> result = new ArrayList<>();
     if (pending && now.isBefore(row.endsAt().toInstant())) result.add(Status.CONFIRMED);
     result.add(Status.CANCELLED);
-    // Confirmed customers may arrive on an earlier date; preserve the original reservation.
     if (confirmed && now.isBefore(row.endsAt().toInstant())) result.add(Status.VISITED);
     if (!now.isBefore(row.endsAt().toInstant())) result.add(Status.NO_SHOW);
     return List.copyOf(result);
@@ -232,6 +382,21 @@ public class AppointmentService {
                     items.getOrDefault(r.id(), List.of()),
                     allowed(r, admin)))
         .toList();
+  }
+
+  private static BigDecimal money(BigDecimal value) {
+    return value.setScale(0, RoundingMode.HALF_UP);
+  }
+
+  private static String fingerprint(String canonical) {
+    try {
+      byte[] digest =
+          MessageDigest.getInstance("SHA-256")
+              .digest(canonical.getBytes(StandardCharsets.UTF_8));
+      return HexFormat.of().formatHex(digest);
+    } catch (Exception e) {
+      throw new IllegalStateException("견적 지문을 생성할 수 없습니다.", e);
+    }
   }
 
   private static ApiException bad(String message) {
