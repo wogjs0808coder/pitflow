@@ -50,6 +50,70 @@ public class AppointmentRepository {
         ids.toArray());
   }
 
+  List<QuoteServiceRow> quoteServices(List<UUID> ids) {
+    if (ids.isEmpty()) return List.of();
+    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+    return db.query(
+        "SELECT id,name,labor_price,duration_minutes,requirements_confirmed FROM service_items"
+            + " WHERE active=TRUE AND id IN ("
+            + placeholders
+            + ") ORDER BY id",
+        (r, n) ->
+            new QuoteServiceRow(
+                r.getObject("id", UUID.class),
+                r.getString("name"),
+                r.getBigDecimal("labor_price"),
+                r.getInt("duration_minutes"),
+                r.getBoolean("requirements_confirmed")),
+        ids.toArray());
+  }
+
+  List<QuoteRequirementRow> quoteRequirements(List<UUID> ids) {
+    if (ids.isEmpty()) return List.of();
+    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+    return db.query(
+        "SELECT r.service_id,p.id AS part_id,p.name AS part_name,p.unit,r.required_quantity,"
+            + "p.unit_price,p.active,p.archived,r.quantity_confirmed FROM service_part_requirements r"
+            + " JOIN parts p ON p.id=r.part_id WHERE r.service_id IN ("
+            + placeholders
+            + ") ORDER BY r.service_id,p.id",
+        (r, n) ->
+            new QuoteRequirementRow(
+                r.getObject("service_id", UUID.class),
+                r.getObject("part_id", UUID.class),
+                r.getString("part_name"),
+                r.getString("unit"),
+                r.getBigDecimal("required_quantity"),
+                r.getBigDecimal("unit_price"),
+                r.getBoolean("active"),
+                r.getBoolean("archived"),
+                r.getBoolean("quantity_confirmed")),
+        ids.toArray());
+  }
+
+  List<QuoteConflictRow> quoteConflicts(List<UUID> ids) {
+    if (ids.size() < 2) return List.of();
+    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+    Object[] args = new Object[ids.size() * 2];
+    for (int i = 0; i < ids.size(); i++) {
+      args[i] = ids.get(i);
+      args[i + ids.size()] = ids.get(i);
+    }
+    return db.query(
+        "SELECT service_id_a,service_id_b,reason FROM service_selection_conflicts"
+            + " WHERE service_id_a IN ("
+            + placeholders
+            + ") AND service_id_b IN ("
+            + placeholders
+            + ") ORDER BY service_id_a,service_id_b",
+        (r, n) ->
+            new QuoteConflictRow(
+                r.getObject("service_id_a", UUID.class),
+                r.getObject("service_id_b", UUID.class),
+                r.getString("reason")),
+        args);
+  }
+
   List<Occupied> occupied(OffsetDateTime from, OffsetDateTime to) {
     return db.query(
         "SELECT work_bay_id, vehicle_id, starts_at FROM slot_allocations WHERE starts_at >= ? AND"
@@ -109,7 +173,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
           item.durationMinutes(),
           item.quantity());
     }
-    // Insert in chronological order. A later conflicting slot rolls back the entire reservation.
     for (int minute = 0; minute < minutes; minute += BookingPolicy.SLOT_MINUTES) {
       db.update(
           "INSERT INTO slot_allocations (appointment_id, work_bay_id, vehicle_id, starts_at) VALUES"
@@ -138,7 +201,6 @@ FROM appointments a JOIN work_bays b ON b.id = a.work_bay_id JOIN users u ON u.i
   }
 
   boolean lock(UUID id, UUID customer) {
-    // Lock only appointments, not joined tables; serialize competing state changes.
     return !db.query(
             "SELECT id FROM appointments WHERE id = ?"
                 + (customer == null ? "" : " AND customer_id = ?")
@@ -204,7 +266,6 @@ FROM appointments a JOIN work_bays b ON b.id = a.work_bay_id JOIN users u ON u.i
     return new Row(
         r.getObject("id", UUID.class),
         r.getObject("customer_id", UUID.class),
-        r.getObject("vehicle_id", UUID.class),
         r.getString("plate_number"),
         r.getString("vehicle_label"),
         r.getObject("work_bay_id", UUID.class),
