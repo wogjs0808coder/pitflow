@@ -58,6 +58,7 @@ public class AppUser {
 
   public enum Role {
     CUSTOMER,
-    ADMIN
+    ADMIN,
+    MECHANIC
   }
 }

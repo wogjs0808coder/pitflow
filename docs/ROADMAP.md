@@ -1,5 +1,14 @@
 # 단계별 구현 계획
 
+## 현재 확장 로드맵
+
+- [x] Phase 1 — 서버 견적, 가격·수량 snapshot, 실제 USE-RETURN 청구 기준 (V9~V11)
+- [x] Phase 2A — 로그인 가능한 MECHANIC 역할과 관리자용 정비사 계정 기반 (V12)
+- [ ] Phase 2B — 정비사 작업지시 배정과 본인 작업 조회
+- [ ] Phase 2C — 정비사 작업 진행 및 USE/RETURN 권한
+
+아래 초기 졸업작품 단계 기록은 기존 구현 이력으로 유지합니다.
+
 ## 1단계 — 계정·차량·정비 항목 (구현)
 - [x] Spring Boot / Next.js 기본 구조
 - [x] PostgreSQL Flyway 스키마

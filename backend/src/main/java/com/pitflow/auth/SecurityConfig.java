@@ -10,6 +10,7 @@ import org.springframework.security.core.userdetails.*;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration
 public class SecurityConfig {
@@ -19,15 +20,23 @@ public class SecurityConfig {
   }
 
   @Bean
-  UserDetailsService userDetailsService(UserRepository users) {
+  UserDetailsService userDetailsService(UserRepository users, JdbcTemplate db) {
     return email -> {
       var u =
           users
               .findByEmail(email.strip().toLowerCase(Locale.ROOT))
               .orElseThrow(() -> new UsernameNotFoundException("Invalid credentials"));
+      boolean enabled =
+          u.getRole() != AppUser.Role.MECHANIC
+              || Boolean.TRUE.equals(
+                  db.queryForObject(
+                      "SELECT COUNT(*) > 0 FROM mechanics WHERE user_id=? AND active=TRUE",
+                      Boolean.class,
+                      u.getId()));
       return User.withUsername(u.getEmail())
           .password(u.getPasswordHash())
           .roles(u.getRole().name())
+          .disabled(!enabled)
           .build();
     };
   }
