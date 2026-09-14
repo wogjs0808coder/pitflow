@@ -119,6 +119,26 @@ public final class AppointmentModels {
       BigDecimal totalLaborPrice,
       int durationMinutes) {}
 
+  record QuoteServiceRow(
+      UUID id,
+      String name,
+      BigDecimal laborPrice,
+      int durationMinutes,
+      boolean requirementsConfirmed) {}
+
+  record QuoteRequirementRow(
+      UUID serviceId,
+      UUID partId,
+      String partName,
+      String unit,
+      BigDecimal requiredQuantity,
+      BigDecimal unitPrice,
+      boolean active,
+      boolean archived,
+      boolean quantityConfirmed) {}
+
+  record QuoteConflictRow(UUID serviceIdA, UUID serviceIdB, String reason) {}
+
   record Occupied(UUID bayId, UUID vehicleId, Instant startsAt) {}
 
   record Car(UUID id, String plateNumber, String label) {}
