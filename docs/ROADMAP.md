@@ -1,66 +1,143 @@
-# 단계별 구현 계획
+# PitFlow Roadmap
 
-## 현재 확장 로드맵
+현재 기준:
 
-- [x] Phase 1 — 서버 견적, 가격·수량 snapshot, 실제 USE-RETURN 청구 기준 (V9~V11)
-- [x] Phase 2A — 로그인 가능한 MECHANIC 역할과 관리자용 정비사 계정 기반 (V12)
-- [x] Phase 2B — 관리자의 정비사 작업지시 배정·재배정·배정 해제 (V13)
-- [x] Phase 2C — 정비사의 본인 작업 목록·상세 조회
-- [x] Phase 2D — 정비사의 작업 진행 및 USE/RETURN 권한
+- Phase 1 — Catalog / Estimate / Snapshot: 완료
+- Phase 2 — Mechanic Workflow: 완료
+- Phase 2 Hotfix — mechanic suggested parts: 완료
 
-아래 초기 졸업작품 단계 기록은 기존 구현 이력으로 유지합니다.
+이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
+`docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
 
-## 1단계 — 계정·차량·정비 항목 (구현)
-- [x] Spring Boot / Next.js 기본 구조
-- [x] PostgreSQL Flyway 스키마
-- [x] 회원가입·로그인·로그아웃
-- [x] 고객·관리자 권한 구분
-- [x] 본인 차량 등록·수정·삭제
-- [x] 정비 항목 조회·관리자 편집·비활성화
-- [x] 통합 테스트, 빌드, Windows 실행 문서
-- [x] 1단계 실제 PostgreSQL 및 Docker 전체 실행 확인 (사용자 Windows 환경)
-- [x] 1단계 대시보드 화면 확인 (사용자 제공 화면)
-- [x] 1단계 GitHub main 업로드
-- [ ] 2단계 Windows Docker 및 고객·관리자 화면 최종 시연
+## Phase 3 — Admin Operations & Notifications
 
-## 2단계 — 정비 예약 (구현)
-- [x] work_bays, appointments, appointment_items, slot_allocations V2 추가
-- [x] 30분 슬롯 기준, 작업 공간별 연속 슬롯 점유
-- [x] 작업 공간·차량과 시각의 고유 제약조건, 충돌 시 전체 롤백
-- [x] 예약 신청·확정·취소·방문·미방문과 상태 전이 제한
-- [x] 차량 소유권·관리자 권한·CSRF 검사와 예약 이력 차량 삭제 제한
-- [x] 예약 당시 차량 정보·항목·가격·시간 스냅샷
-- [x] 동시 예약, 후반 슬롯 충돌 롤백, 확정·취소 경쟁 테스트
-- [x] 고객 예약 폼·월별 내역과 관리자 일별 캘린더
-- [x] 실제 PostgreSQL을 사용하는 GitHub Actions 검사 구성
-- [ ] 2단계 사용자 Windows 환경 시연 확인
+목표:
+관리자와 정비사 사이의 운영 흐름을 개선하고, 일부 부품 부족 때문에 전체 작업이 중단되는 구조를 개선한다.
 
-## 3단계 — 정비 작업·부품
-- [x] V3: 작업지시·항목·정비사·부품·재고 원장·요청 키·상태 이력
-- [x] 입고 주행거리, 담당 배정, 상태/항목 관리
-- [x] NUMERIC(14,3) 소수 수량, 실물 입고·사용·부분 반환
-- [x] DB 잠금, 전체 롤백, 요청 키별 성공 응답 재전송
-- [x] 사용 후 취소 시 이력 보존, 확인된 실물 반환만 복원
-- [x] 관리자 작업/재고/정비사 화면과 고객 본인 작업 조회
-- [x] 부족 재고·중복 요청·동시 사용·반환 경쟁 테스트
-- [ ] 이번 브랜치 PostgreSQL CI 및 Windows Docker·브라우저 최종 확인
+### Phase 3A — Notification Foundation
 
-상세 정책과 적용 방법: [PHASE3.md](PHASE3.md).
+- DB 기반 알림
+- 알림 목록
+- 읽지 않은 알림 수
+- 읽음 처리
+- 최소 알림 UI
 
-## 4단계 — 이력·수납·운영 현황
-- [x] 정비 이력과 작업 시점 단가 보존
-- [x] 현장 수납 기록과 취소 이력
-- [x] 완료 건수·실제 수납 기준 실적
-- [x] 고객 본인 차량 이력 접근 검사
-- [ ] 사용자 Windows Docker·브라우저 시연 및 이번 브랜치 PostgreSQL CI
+초기 알림 유형:
 
-상세 정책: [PHASE4.md](PHASE4.md).
+- WORK_ASSIGNED
+- WORK_COMPLETED
+- PART_SHORTAGE
 
-## 5단계 — 배포·발표
-- PostgreSQL 실제 환경에서 전체 시나리오 검증
-- 데스크톱·모바일 화면 검증
-- 배포 설정, 백업·복구, 운영 로그
-- 시연: 예약 → 입고 → 부품 사용 → 완료 → 수납 → 고객 이력
-- 동시 예약과 부족 재고 처리 결과 제시
+SMS, 이메일, 카카오톡, WebSocket은 아직 하지 않는다.
 
-AI 진단, 온라인 결제, 차량번호 기반 외부 개인정보 조회, 여러 지점 운영은 초기 범위에 포함하지 않습니다.
+### Phase 3B — Assignment / Completion
+
+- 관리자가 정비사를 배정하면 정비사에게 알림
+- 재배정 시 새 정비사에게 알림
+- 정비사가 작업을 완료하면 관리자에게 알림
+
+### Phase 3C — Part Shortage
+
+- 정비사의 명시적 재고 부족 보고
+- 단순 409 오류는 알림으로 만들지 않음
+- 작업, 항목, 부품, 필요 수량, 현재 수량 기록
+- 관리자에서 부족 보고 확인
+
+### Phase 3D — Item-level Workflow
+
+WorkOrderItem 상태 도입:
+
+- PENDING
+- IN_PROGRESS
+- COMPLETED
+- WAITING_PARTS
+- SKIPPED
+
+기존 done boolean 및 운영 데이터와 호환되는 migration을 사용한다.
+
+전체 작업은 모든 항목이 COMPLETED 또는 SKIPPED일 때만 COMPLETED 가능하게 한다.
+
+SKIPPED에는 사유가 필요하다.
+
+### Phase 3E — Admin Workspace
+
+관리자 화면에서 다음 상태를 쉽게 확인한다.
+
+- 오늘 예약
+- 입고 대기
+- 작업 중
+- 부품 대기
+- 정비 완료
+- 정산 대기
+- 출고 대기
+
+---
+
+## Phase 4 — Finance & Cost
+
+목표:
+현재 고객 청구 기능 위에 실제 사업 운영 관점의 원가와 수익 정보를 추가한다.
+
+주요 범위:
+
+- 부품 판매가와 매입가 분리
+- 입고 lot
+- FIFO 또는 명시적인 원가 계산 방식
+- 부품 원가
+- 정비사 작업 원가 추정
+- 매출 / 원가 / 기여이익 조회
+
+기존 고객 invoice snapshot은 유지한다.
+
+---
+
+## Phase 5 — Payments
+
+목표:
+현재 내부 수납 기록에 실제 PG 결제를 연결한다.
+
+주요 범위:
+
+- 결제 승인
+- 취소
+- 환불
+- webhook
+- 중복 webhook 방지
+- 결제 idempotency
+- PG transaction ID
+- 실패 복구
+- reconciliation
+
+초기에는 전액 결제 / 전액 취소를 우선한다.
+
+---
+
+## Phase 6 — Hardening / E2E / Production Readiness
+
+주요 범위:
+
+- 전체 E2E
+- CUSTOMER / MECHANIC / ADMIN 권한 regression
+- 동시성
+- idempotency
+- PostgreSQL migration 검증
+- production 데이터 clone migration
+- backup / restore
+- logging
+- production smoke test
+- 최종 문서
+- 포트폴리오 자료 정리
+
+---
+
+## 앞으로의 구현 순서
+
+Documentation Cleanup
+→ Phase 3A
+→ Phase 3B
+→ Phase 3C
+→ Phase 3D
+→ Phase 3E
+→ Phase 4
+→ Phase 5
+→ Phase 6
