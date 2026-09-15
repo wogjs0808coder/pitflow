@@ -36,7 +36,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </div>
     );
   if (!user) return null;
-  const links = [
+  const links = user.role === "MECHANIC" ? [
+    { href: "/mechanic/work-orders", label: "내 정비 작업", icon: Wrench },
+  ] : [
     { href: "/dashboard", label: "내 정비 홈", icon: Gauge },
     { href: "/vehicles", label: "내 차량", icon: CarFront },
     { href: "/services", label: "정비 항목", icon: Wrench },
@@ -48,7 +50,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     links.push(
       { href: "/admin/appointments", label: "예약 캘린더", icon: CalendarDays },
       { href: "/admin/work-orders", label: "정비 작업 관리", icon: Wrench },
-      { href: "/admin/parts", label: "부품·정비사 관리", icon: Settings2 },
+      { href: "/admin/parts", label: "부품 관리", icon: Settings2 },
+      { href: "/admin/mechanics", label: "정비사·계정 관리", icon: Settings2 },
       {
         href: "/admin/services",
         label: "정비 항목 관리",
@@ -62,7 +65,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         본문으로 이동
       </a>
       <aside className="sidebar">
-        <Link className="brand" href="/dashboard">
+        <Link className="brand" href={user.role === "MECHANIC" ? "/mechanic/work-orders" : "/dashboard"}>
           <span className="brand-mark">
             <Wrench size={21} aria-hidden />
           </span>
@@ -90,7 +93,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Link>
           ))}
         </nav>
-        <div className="sidebar-note">
+        {user.role !== "MECHANIC" && <div className="sidebar-note">
           <span className="small-label">차량 관리의 시작</span>
           <p>
             내 차의 정보를
@@ -100,12 +103,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Link href="/vehicles">
             차량 관리하기 <ArrowUpRight size={16} aria-hidden />
           </Link>
-        </div>
+        </div>}
         <div className="profile">
           <div className="avatar">{user.name.slice(0, 1)}</div>
           <div className="profile-text">
             <strong>{user.name}</strong>
-            <span>{user.role === "ADMIN" ? "관리자" : "고객"}</span>
+            <span>{user.role === "ADMIN" ? "관리자" : user.role === "MECHANIC" ? "정비사" : "고객"}</span>
           </div>
           <button
             className="icon-button"

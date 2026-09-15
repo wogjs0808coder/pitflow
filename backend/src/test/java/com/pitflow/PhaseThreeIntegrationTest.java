@@ -620,6 +620,58 @@ class PhaseThreeIntegrationTest {
   }
 
   @Test
+  void receiveWithoutMechanicPreservesSnapshotsAndCanBeAssignedLater() throws Exception {
+    var actor = assignedMechanic("phase2e-receive@example.com");
+    db.update("UPDATE appointment_items SET quantity=2 WHERE appointment_id=?", appointment);
+    var body = new HashMap<String, Object>();
+    body.put("appointmentId", appointment);
+    body.put("receivedMileage", 27000);
+    body.put("mechanicId", null);
+    body.put("notes", "미배정 입고");
+    var received = ok("POST", "/api/admin/work-orders/from-appointment", body);
+    UUID work = UUID.fromString(received.get("id").asText());
+    assertThat(received.get("mechanic_id").isNull()).isTrue();
+    assertThat(received.get("mechanic_name").isNull()).isTrue();
+    assertThat(received.get("items").get(0).get("quantity").asInt()).isEqualTo(2);
+    assertThat(received.get("events").get(0).get("detail").asText()).contains("미배정");
+    assertThat(db.queryForObject("SELECT mileage FROM vehicles WHERE id=?", Integer.class, car))
+        .isEqualTo(27000);
+    mvc.perform(get("/api/mechanic/work-orders/" + work).with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isNotFound());
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + work + "/status",
+                    Map.of("status", "IN_PROGRESS"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + work + "/assignment",
+        Map.of("mechanicId", actor.mechanicId()));
+    mvc.perform(get("/api/mechanic/work-orders/" + work).with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void mechanicPartPickerIsMinimalAndRoleProtected() throws Exception {
+    var actor = assignedMechanic("phase2e-parts@example.com");
+    UUID available = part("P2E-PART", "1");
+    mvc.perform(get("/api/mechanic/parts").with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.id == '" + available + "')].sku").exists())
+        .andExpect(jsonPath("$[0].quantity").doesNotExist())
+        .andExpect(jsonPath("$[0].unit_price").doesNotExist());
+    mvc.perform(
+            get("/api/mechanic/parts")
+                .with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
   void adminCanAssignReassignReadAndClearCurrentMechanic() throws Exception {
     UUID w = work(appointment);
     var unassigned = new HashMap<String, Object>();

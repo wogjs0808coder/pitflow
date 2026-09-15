@@ -26,6 +26,13 @@ public class MechanicAccountController {
     return accounts.create(request);
   }
 
+  @PostMapping("/{id}/account")
+  @ResponseStatus(HttpStatus.CREATED)
+  public MechanicAccountView link(
+      @PathVariable UUID id, @Valid @RequestBody Link request) {
+    return accounts.link(id, request);
+  }
+
   @PatchMapping("/{id}/active")
   public MechanicAccountView setActive(
       @PathVariable UUID id, @Valid @RequestBody Active request) {

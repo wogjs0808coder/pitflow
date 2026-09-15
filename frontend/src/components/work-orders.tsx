@@ -16,13 +16,24 @@ import {
 } from "@/lib/work";
 import { useWorkCommand } from "./work-command";
 
-export function WorkOrders({ admin = false }: { admin?: boolean }) {
+type PickerPart = Pick<Part, "id" | "sku" | "name" | "unit"> & {
+  active?: boolean;
+  quantity?: Part["quantity"];
+};
+
+export function WorkOrders({
+  admin = false,
+  mechanic = false,
+}: {
+  admin?: boolean;
+  mechanic?: boolean;
+}) {
   const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("active");
   const [orders, setOrders] = useState<Work[]>([]);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
-  const [parts, setParts] = useState<Part[]>([]);
+  const [parts, setParts] = useState<PickerPart[]>([]);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<WorkDetail | null>(null);
   const [error, setError] = useState("");
@@ -33,8 +44,18 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
   const [bookingError, setBookingError] = useState("");
   const [bookingLoading, setBookingLoading] = useState(false);
   const [revision, setRevision] = useState(0);
-  const base = admin ? "/api/admin/work-orders" : "/api/work-orders";
-  const permitted = !!user && (!admin || user.role === "ADMIN");
+  const base = admin
+    ? "/api/admin/work-orders"
+    : mechanic
+      ? "/api/mechanic/work-orders"
+      : "/api/work-orders";
+  const permitted =
+    !!user &&
+    (admin
+      ? user.role === "ADMIN"
+      : mechanic
+        ? user.role === "MECHANIC"
+        : user.role === "CUSTOMER" || user.role === "ADMIN");
   const reload = useCallback(async () => {
     setRevision((n) => n + 1);
   }, []);
@@ -51,8 +72,10 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
         ? api<Mechanic[]>("/api/admin/mechanics", { signal: c.signal })
         : Promise.resolve([]),
       admin
-        ? api<Part[]>("/api/admin/parts", { signal: c.signal })
-        : Promise.resolve([]),
+        ? api<PickerPart[]>("/api/admin/parts", { signal: c.signal })
+        : mechanic
+          ? api<PickerPart[]>("/api/mechanic/parts", { signal: c.signal })
+          : Promise.resolve([]),
     ])
       .then(([w, m, p]) => {
         if (!c.signal.aborted) {
@@ -68,7 +91,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
         if (!c.signal.aborted) setLoading(false);
       });
     return () => c.abort();
-  }, [base, admin, permitted, revision]);
+  }, [base, admin, mechanic, permitted, revision]);
   useEffect(() => {
     setDetail(null);
     if (!selected || !permitted) return;
@@ -109,7 +132,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
   if (!permitted)
     return (
       <p role="alert">
-        {admin ? "관리자만 이용할 수 있습니다." : "로그인이 필요합니다."}
+        {admin || mechanic ? "이 화면을 이용할 권한이 없습니다." : "로그인이 필요합니다."}
       </p>
     );
   const category = (w: Work) =>
@@ -144,7 +167,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
       <div className="page-heading">
         <div>
           <span className="eyebrow">SERVICE WORK</span>
-          <h1>{admin ? "정비 작업 관리" : "내 정비 작업"}</h1>
+          <h1>{admin ? "정비 작업 관리" : mechanic ? "내 담당 작업" : "내 정비 작업"}</h1>
           <p>입고부터 완료까지 작업 상태와 부품 사용 내역을 확인하세요.</p>
         </div>
         <button
@@ -275,7 +298,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
               void command.run(`${base}/from-appointment`, {
                 appointmentId: f.get("appointment"),
                 receivedMileage: Number(f.get("mileage")),
-                mechanicId: f.get("mechanic"),
+                mechanicId: f.get("mechanic") || null,
                 notes: f.get("notes"),
               });
             }}
@@ -319,9 +342,9 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
               </label>
               <label>
                 담당 정비사
-                <select name="mechanic" required defaultValue="">
-                  <option value="" disabled>
-                    정비사 선택
+                <select name="mechanic" defaultValue="">
+                  <option value="">
+                    미배정으로 입고
                   </option>
                   {mechanics
                     .filter((m) => m.active)
@@ -341,8 +364,8 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
           </form>
           {!mechanics.some((m) => m.active) && (
             <p>
-              <Link href="/admin/parts">
-                부품·정비사 관리에서 담당자를 먼저 등록하세요.
+              활성 정비사가 없어도 미배정으로 입고할 수 있습니다. <Link href="/admin/mechanics">
+                정비사·계정 관리
               </Link>
             </p>
           )}
@@ -483,7 +506,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                           ? ` · 공임 합계 ${won(i.labor_price * i.quantity)}`
                           : ""}
                       </span>
-                      {admin ? (
+                      {admin || mechanic ? (
                         <label>
                           <input
                             type="checkbox"
@@ -507,14 +530,14 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                     </li>
                   ))}
                 </ul>
-                {admin && workTransitions[detail.status].length > 0 && (
+                {(admin || mechanic) && workTransitions[detail.status].length > 0 && (
                   <>
-                    <form
+                    {admin && <form
                       onSubmit={(e) => {
                         const f = fields(e);
                         void command.run(
                           `${base}/${detail.id}/assignment`,
-                          { mechanicId: f.get("mechanic") },
+                          { mechanicId: f.get("mechanic") || null },
                           "PATCH",
                         );
                       }}
@@ -527,6 +550,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                             defaultValue={detail.mechanic_id ?? undefined}
                             key={detail.mechanic_id ?? "unassigned"}
                           >
+                            <option value="">미배정</option>
                             {mechanics
                               .filter(
                                 (m) => m.active || m.id === detail.mechanic_id,
@@ -544,7 +568,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                         </label>
                         <button className="button secondary">담당 배정</button>
                       </fieldset>
-                    </form>
+                    </form>}
                     <form
                       onSubmit={(e) => {
                         const f = fields(e);
@@ -610,14 +634,14 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                     )}
                   </section>
                 )}
-                {admin && detail.status === "IN_PROGRESS" && (
+                {(admin || mechanic) && detail.status === "IN_PROGRESS" && (
                   <form
                     key={`${detail.id}-${revision}-use`}
                     onSubmit={(e) => {
                       const f = fields(e);
                       setFormError("");
                       const lines = parts
-                        .filter((p) => p.active)
+                        .filter((p) => p.active !== false)
                         .map((p) => ({
                           partId: p.id,
                           quantity: String(f.get(p.id) || ""),
@@ -640,7 +664,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                     </p>
                     <fieldset disabled={disabled}>
                       {parts
-                        .filter((p) => p.active)
+                        .filter((p) => p.active !== false)
                         .sort(
                           (a, b) =>
                             Number(
@@ -659,7 +683,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                             {detail.suggested_parts?.some((s) => s.id === p.id)
                               ? "[준비 부품] "
                               : ""}
-                            {p.name} · 재고 {String(p.quantity)} {p.unit}
+                            {p.name} · {admin ? `재고 ${String(p.quantity)} ${p.unit}` : `${p.sku} · ${p.unit}`}
                             <input
                             name={p.id}
                             type="number"
@@ -676,7 +700,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                       </label>
                       <button
                         className="button primary"
-                        disabled={!parts.some((p) => p.active)}
+                        disabled={!parts.some((p) => p.active !== false)}
                       >
                         선택 부품 사용
                       </button>
@@ -697,7 +721,7 @@ export function WorkOrders({ admin = false }: { admin?: boolean }) {
                     <p>
                       {localTime(m.created_at)} · {m.reason}
                     </p>
-                    {admin &&
+                    {(admin || mechanic) &&
                       m.kind === "USE" &&
                       Number(remaining(m, detail.movements)) > 0 && (
                         <form

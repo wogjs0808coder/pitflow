@@ -40,7 +40,7 @@ public final class WorkRequests {
   public record Receive(
       @NotNull UUID appointmentId,
       @NotNull @Min(0) @Max(9999999) Integer receivedMileage,
-      @NotNull UUID mechanicId,
+      UUID mechanicId,
       @Size(max = 1000) String notes) {}
 
   public record State(@NotNull Status status, @Size(max = 900) String reason) {}

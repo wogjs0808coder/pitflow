@@ -225,6 +225,11 @@ public class WorkService {
     return parts;
   }
 
+  public List<Map<String, Object>> mechanicParts() {
+    return rows(
+        "SELECT id,sku,name,unit FROM parts WHERE active=TRUE AND archived=FALSE ORDER BY sku");
+  }
+
   public Map<String, Object> part(String email, UUID key, UUID existing, Part r) {
     return command(
         email,
@@ -365,8 +370,11 @@ public class WorkService {
           var car = one("SELECT * FROM vehicles WHERE id=? FOR UPDATE", vehicle);
           if (r.receivedMileage() < ((Number) car.get("mileage")).intValue())
             throw conflict("입고 주행거리가 현재 차량 주행거리보다 작습니다.");
-          var m = one("SELECT * FROM mechanics WHERE id=? FOR UPDATE", r.mechanicId());
-          if (!active(m)) throw conflict("활성 정비사를 배정해 주세요.");
+          Map<String, Object> m = null;
+          if (r.mechanicId() != null) {
+            m = one("SELECT * FROM mechanics WHERE id=? FOR UPDATE", r.mechanicId());
+            if (!active(m)) throw conflict("활성 정비사를 배정해 주세요.");
+          }
           UUID work = UUID.randomUUID();
           db.update(
               "INSERT INTO work_orders"
@@ -380,7 +388,7 @@ public class WorkService {
               a.get("plate_number"),
               r.receivedMileage(),
               r.mechanicId(),
-              m.get("name"),
+              m == null ? null : m.get("name"),
               r.notes() == null ? "" : r.notes().strip(),
               now(),
               now());
@@ -407,7 +415,10 @@ public class WorkService {
               work,
               actor(email, true),
               "RECEIVED",
-              "입고 · " + r.receivedMileage() + " km · " + m.get("name"));
+              "입고 · "
+                  + r.receivedMileage()
+                  + " km · "
+                  + (m == null ? "미배정" : m.get("name")));
           return detail(email, work, true);
         });
   }

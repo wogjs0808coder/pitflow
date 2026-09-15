@@ -46,6 +46,8 @@ class MechanicAccountIntegrationTest {
   @AfterEach
   void cleanup() {
     db.update("DELETE FROM mechanics WHERE code LIKE 'P2A-%'");
+    db.update("DELETE FROM mechanics WHERE code LIKE 'P2E-%'");
+    db.update("DELETE FROM users WHERE email LIKE 'phase2e-%'");
     users.findByEmail("phase2a-mechanic@example.com").ifPresent(users::delete);
     users.findByEmail(ADMIN).ifPresent(users::delete);
     users.findByEmail(CUSTOMER).ifPresent(users::delete);
@@ -133,6 +135,94 @@ class MechanicAccountIntegrationTest {
     mvc.perform(realLogin(CUSTOMER, PASSWORD))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.role").value("CUSTOMER"));
+  }
+
+  @Test
+  void adminLinksExistingMechanicWithoutReplacingProfile() throws Exception {
+    UUID mechanic = UUID.randomUUID();
+    db.update(
+        "INSERT INTO mechanics (id,code,name,active) VALUES (?,'P2E-LEGACY','기존 정비사',TRUE)",
+        mechanic);
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + mechanic + "/account")
+                .with(user(ADMIN).roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"phase2e-linked@example.com\",\"password\":\"Test-password-2026!\"}"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.id").value(mechanic.toString()))
+        .andExpect(jsonPath("$.code").value("P2E-LEGACY"))
+        .andExpect(jsonPath("$.name").value("기존 정비사"))
+        .andExpect(jsonPath("$.active").value(true));
+    var account = users.findByEmail("phase2e-linked@example.com").orElseThrow();
+    assertThat(account.getRole()).isEqualTo(AppUser.Role.MECHANIC);
+    assertThat(passwords.matches(PASSWORD, account.getPasswordHash())).isTrue();
+    assertThat(
+            db.queryForObject("SELECT user_id FROM mechanics WHERE id=?", UUID.class, mechanic))
+        .isEqualTo(account.getId());
+    mvc.perform(realLogin("phase2e-linked@example.com", PASSWORD)).andExpect(status().isOk());
+  }
+
+  @Test
+  void linkingValidatesConflictsAuthorizationAndRollsBack() throws Exception {
+    UUID legacy = UUID.randomUUID(), inactive = UUID.randomUUID();
+    db.update(
+        "INSERT INTO mechanics (id,code,name,active) VALUES (?,'P2E-CONFLICT','충돌',TRUE)",
+        legacy);
+    db.update(
+        "INSERT INTO mechanics (id,code,name,active) VALUES (?,'P2E-INACTIVE','비활성',FALSE)",
+        inactive);
+    String duplicate = "{\"email\":\"" + CUSTOMER + "\",\"password\":\"Test-password-2026!\"}";
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + legacy + "/account")
+                .with(user(ADMIN).roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(duplicate))
+        .andExpect(status().isConflict());
+    assertThat(db.queryForObject("SELECT user_id FROM mechanics WHERE id=?", UUID.class, legacy))
+        .isNull();
+    assertThat(users.findByEmail(CUSTOMER)).isPresent();
+
+    String body = "{\"email\":\"phase2e-inactive@example.com\",\"password\":\"Test-password-2026!\"}";
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + UUID.randomUUID() + "/account")
+                .with(user(ADMIN).roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isNotFound());
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + inactive + "/account")
+                .with(user(CUSTOMER).roles("CUSTOMER"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + inactive + "/account")
+                .with(user("phase2e-fake@example.com").roles("MECHANIC"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + inactive + "/account")
+                .with(user(ADMIN).roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isCreated());
+    mvc.perform(realLogin("phase2e-inactive@example.com", PASSWORD))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(
+            post("/api/admin/mechanic-accounts/" + inactive + "/account")
+                .with(user(ADMIN).roles("ADMIN"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"phase2e-second@example.com\",\"password\":\"Test-password-2026!\"}"))
+        .andExpect(status().isConflict());
+    assertThat(users.findByEmail("phase2e-second@example.com")).isEmpty();
   }
 
   private MockHttpServletRequestBuilder realLogin(String email, String password) {

@@ -2,6 +2,7 @@ package com.pitflow.mechanic;
 
 import com.pitflow.common.ApiException;
 import com.pitflow.mechanic.MechanicAccountRequests.Create;
+import com.pitflow.mechanic.MechanicAccountRequests.Link;
 import com.pitflow.user.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -44,8 +45,7 @@ public class MechanicAccountService {
   @Transactional
   public MechanicAccountView create(Create request) {
     String email = request.email().strip().toLowerCase(Locale.ROOT);
-    if (request.password().getBytes(StandardCharsets.UTF_8).length > 72)
-      throw new ApiException(HttpStatus.BAD_REQUEST, "비밀번호는 UTF-8 기준 72바이트 이하여야 합니다.");
+    validatePassword(request.password());
     if (users.existsByEmail(email))
       throw new ApiException(HttpStatus.CONFLICT, "이미 등록된 이메일입니다.");
 
@@ -67,6 +67,28 @@ public class MechanicAccountService {
         code,
         name,
         request.active());
+    return find(mechanic);
+  }
+
+  @Transactional
+  public MechanicAccountView link(UUID mechanic, Link request) {
+    var rows = db.queryForList("SELECT * FROM mechanics WHERE id=? FOR UPDATE", mechanic);
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
+    var profile = rows.get(0);
+    if (profile.get("user_id") != null)
+      throw new ApiException(HttpStatus.CONFLICT, "이미 로그인 계정이 연결된 정비사입니다.");
+    String email = request.email().strip().toLowerCase(Locale.ROOT);
+    validatePassword(request.password());
+    if (users.existsByEmail(email))
+      throw new ApiException(HttpStatus.CONFLICT, "이미 등록된 이메일입니다.");
+    AppUser account =
+        users.saveAndFlush(
+            new AppUser(
+                email,
+                passwords.encode(request.password()),
+                profile.get("name").toString(),
+                AppUser.Role.MECHANIC));
+    db.update("UPDATE mechanics SET user_id=? WHERE id=?", account.getId(), mechanic);
     return find(mechanic);
   }
 
@@ -97,5 +119,10 @@ public class MechanicAccountService {
             mechanic);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
     return rows.get(0);
+  }
+
+  private void validatePassword(String password) {
+    if (password.getBytes(StandardCharsets.UTF_8).length > 72)
+      throw new ApiException(HttpStatus.BAD_REQUEST, "비밀번호는 UTF-8 기준 72바이트 이하여야 합니다.");
   }
 }
