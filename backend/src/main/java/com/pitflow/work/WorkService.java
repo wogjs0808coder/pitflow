@@ -134,8 +134,17 @@ public class WorkService {
 
   private Map<String, Object> command(
       String email, UUID key, String scope, Object body, Supplier<Map<String, Object>> action) {
+    return command(actor(email, true), key, scope, body, action, null);
+  }
+
+  private Map<String, Object> command(
+      UUID actor,
+      UUID key,
+      String scope,
+      Object body,
+      Supplier<Map<String, Object>> action,
+      Runnable replayAuthorization) {
     if (key == null) throw bad("요청 키가 필요합니다.");
-    UUID actor = actor(email, true);
     String hash = hash(scope, body);
     try {
       return tx.execute(
@@ -157,6 +166,8 @@ public class WorkService {
           });
     } catch (DuplicateKeyException e) {
       // PostgreSQL aborts a transaction on constraint failure: read only AFTER rollback.
+      if (replayAuthorization != null)
+        tx.executeWithoutResult(status -> replayAuthorization.run());
       return replay(key, actor, hash);
     }
   }
@@ -212,6 +223,11 @@ public class WorkService {
     for (var p : parts)
       p.put("services", links.stream().filter(l -> id(l, "part_id").equals(id(p, "id"))).toList());
     return parts;
+  }
+
+  public List<Map<String, Object>> mechanicParts() {
+    return rows(
+        "SELECT id,sku,name,unit FROM parts WHERE active=TRUE AND archived=FALSE ORDER BY sku");
   }
 
   public Map<String, Object> part(String email, UUID key, UUID existing, Part r) {
@@ -294,6 +310,32 @@ public class WorkService {
     return one("SELECT * FROM work_orders WHERE id=? FOR UPDATE", work);
   }
 
+  private Map<String, Object> lockMechanicWork(UUID work, UUID actor, UUID mechanic) {
+    var order = lockWork(work);
+    if (order.get("mechanic_id") == null || !mechanic.equals(id(order, "mechanic_id")))
+      throw missing();
+    if (db.queryForList(
+            """
+            SELECT m.id
+            FROM mechanics m JOIN users u ON u.id=m.user_id
+            WHERE m.id=? AND m.user_id=? AND m.active=TRUE AND u.role='MECHANIC'
+            FOR UPDATE
+            """,
+            mechanic,
+            actor)
+        .isEmpty())
+      throw new ApiException(HttpStatus.FORBIDDEN, "활성 정비사 계정이 필요합니다.");
+    return order;
+  }
+
+  private Map<String, Object> mutationWork(UUID work, UUID actor, UUID mechanic) {
+    return mechanic == null ? lockWork(work) : lockMechanicWork(work, actor, mechanic);
+  }
+
+  private Map<String, Object> mutationDetail(UUID work, boolean admin) {
+    return detail(clean(one("SELECT * FROM work_orders WHERE id=?", work)), work, admin);
+  }
+
   private void editable(Map<String, Object> w) {
     if (Set.of("COMPLETED", "CANCELLED").contains(w.get("status")))
       throw conflict("종료된 작업은 수정할 수 없습니다.");
@@ -328,8 +370,11 @@ public class WorkService {
           var car = one("SELECT * FROM vehicles WHERE id=? FOR UPDATE", vehicle);
           if (r.receivedMileage() < ((Number) car.get("mileage")).intValue())
             throw conflict("입고 주행거리가 현재 차량 주행거리보다 작습니다.");
-          var m = one("SELECT * FROM mechanics WHERE id=? FOR UPDATE", r.mechanicId());
-          if (!active(m)) throw conflict("활성 정비사를 배정해 주세요.");
+          Map<String, Object> m = null;
+          if (r.mechanicId() != null) {
+            m = one("SELECT * FROM mechanics WHERE id=? FOR UPDATE", r.mechanicId());
+            if (!active(m)) throw conflict("활성 정비사를 배정해 주세요.");
+          }
           UUID work = UUID.randomUUID();
           db.update(
               "INSERT INTO work_orders"
@@ -343,7 +388,7 @@ public class WorkService {
               a.get("plate_number"),
               r.receivedMileage(),
               r.mechanicId(),
-              m.get("name"),
+              m == null ? null : m.get("name"),
               r.notes() == null ? "" : r.notes().strip(),
               now(),
               now());
@@ -370,7 +415,10 @@ public class WorkService {
               work,
               actor(email, true),
               "RECEIVED",
-              "입고 · " + r.receivedMileage() + " km · " + m.get("name"));
+              "입고 · "
+                  + r.receivedMileage()
+                  + " km · "
+                  + (m == null ? "미배정" : m.get("name")));
           return detail(email, work, true);
         });
   }
@@ -382,6 +430,11 @@ public class WorkService {
         : rows("SELECT * FROM work_orders WHERE customer_id=? ORDER BY received_at DESC,id", user);
   }
 
+  public List<Map<String, Object>> mechanicList(UUID mechanic) {
+    return rows(
+        "SELECT * FROM work_orders WHERE mechanic_id=? ORDER BY received_at DESC,id", mechanic);
+  }
+
   public Map<String, Object> detail(String email, UUID work, boolean admin) {
     UUID user = actor(email, admin);
     var result =
@@ -389,6 +442,15 @@ public class WorkService {
             admin
                 ? one("SELECT * FROM work_orders WHERE id=?", work)
                 : one("SELECT * FROM work_orders WHERE id=? AND customer_id=?", work, user));
+    return detail(result, work, admin);
+  }
+
+  public Map<String, Object> mechanicDetail(UUID mechanic, UUID work) {
+    var result = clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic));
+    return detail(result, work, false);
+  }
+
+  private Map<String, Object> detail(Map<String, Object> result, UUID work, boolean admin) {
     result.put(
         "items",
         rows("SELECT * FROM work_order_items WHERE work_order_id=? ORDER BY name,id", work));
@@ -411,7 +473,7 @@ public class WorkService {
                 "SELECT event_type,detail,created_at FROM work_order_events WHERE work_order_id=?"
                     + " ORDER BY created_at,id",
                 work));
-    // Customers see their usage, not stock levels or administrator identities.
+    // Non-admin readers see work usage, not warehouse levels or administrator identities.
     result.put(
         "movements",
         admin
@@ -426,16 +488,26 @@ public class WorkService {
   }
 
   public Map<String, Object> state(String email, UUID key, UUID work, State r) {
+    return state(actor(email, true), null, key, work, r, true);
+  }
+
+  public Map<String, Object> mechanicState(
+      UUID actor, UUID mechanic, UUID key, UUID work, State r) {
+    return state(actor, mechanic, key, work, r, false);
+  }
+
+  private Map<String, Object> state(
+      UUID actor, UUID mechanic, UUID key, UUID work, State r, boolean adminResponse) {
     return command(
-        email,
+        actor,
         key,
         "state/" + work,
         r,
         () -> {
-          var w = lockWork(work);
+          var w = mutationWork(work, actor, mechanic);
           String current = w.get("status").toString();
           String target = r.status().name();
-          if (current.equals(target)) return detail(email, work, true);
+          if (current.equals(target)) return mutationDetail(work, adminResponse);
           editable(w);
           var allowed =
               switch (current) {
@@ -458,12 +530,13 @@ public class WorkService {
             db.update("UPDATE work_orders SET completed_at=? WHERE id=?", now(), work);
           event(
               work,
-              actor(email, true),
+              actor,
               "STATUS",
               current + " → " + target + (r.reason() == null ? "" : " · " + r.reason().strip()));
           // Cancellation never invents a physical return. Existing USE rows remain intact.
-          return detail(email, work, true);
-        });
+          return mutationDetail(work, adminResponse);
+        },
+        mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
   }
 
   public Map<String, Object> release(String email, UUID key, UUID work) {
@@ -491,6 +564,12 @@ public class WorkService {
         r,
         () -> {
           editable(lockWork(work));
+          if (r.mechanicId() == null) {
+            db.update(
+                "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", work);
+            event(work, actor(email, true), "UNASSIGNED", "담당 정비사 배정 해제");
+            return detail(email, work, true);
+          }
           var m = one("SELECT * FROM mechanics WHERE id=? FOR UPDATE", r.mechanicId());
           if (!active(m)) throw conflict("활성 정비사를 선택해 주세요.");
           db.update(
@@ -504,21 +583,38 @@ public class WorkService {
   }
 
   public Map<String, Object> item(String email, UUID key, UUID work, UUID item, ItemState r) {
+    return item(actor(email, true), null, key, work, item, r, true);
+  }
+
+  public Map<String, Object> mechanicItem(
+      UUID actor, UUID mechanic, UUID key, UUID work, UUID item, ItemState r) {
+    return item(actor, mechanic, key, work, item, r, false);
+  }
+
+  private Map<String, Object> item(
+      UUID actor,
+      UUID mechanic,
+      UUID key,
+      UUID work,
+      UUID item,
+      ItemState r,
+      boolean adminResponse) {
     return command(
-        email,
+        actor,
         key,
         "item/" + work + "/" + item,
         r,
         () -> {
-          var w = lockWork(work);
+          var w = mutationWork(work, actor, mechanic);
           editable(w);
           if (!"IN_PROGRESS".equals(w.get("status"))) throw conflict("진행 중인 작업에서 정비 항목을 변경해 주세요.");
           var i = one("SELECT * FROM work_order_items WHERE id=? AND work_order_id=?", item, work);
           db.update("UPDATE work_order_items SET done=? WHERE id=?", r.done(), item);
           event(
-              work, actor(email, true), "ITEM", i.get("name") + " · " + (r.done() ? "완료" : "미완료"));
-          return detail(email, work, true);
-        });
+              work, actor, "ITEM", i.get("name") + " · " + (r.done() ? "완료" : "미완료"));
+          return mutationDetail(work, adminResponse);
+        },
+        mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
   }
 
   private BigDecimal quantity(BigDecimal q) {
@@ -660,6 +756,15 @@ public class WorkService {
   }
 
   public Map<String, Object> use(String email, UUID key, UUID work, Use r) {
+    return use(actor(email, true), null, key, work, r);
+  }
+
+  public Map<String, Object> mechanicUse(
+      UUID actor, UUID mechanic, UUID key, UUID work, Use r) {
+    return use(actor, mechanic, key, work, r);
+  }
+
+  private Map<String, Object> use(UUID actor, UUID mechanic, UUID key, UUID work, Use r) {
     if (r.lines() == null || r.lines().isEmpty() || r.lines().size() > 30)
       throw bad("부품을 1~30개 선택해 주세요.");
     var lines =
@@ -670,12 +775,12 @@ public class WorkService {
     if (lines.stream().map(Line::partId).distinct().count() != lines.size())
       throw bad("같은 부품을 중복 선택할 수 없습니다.");
     return command(
-        email,
+        actor,
         key,
         "use/" + work,
         new Use(lines, r.reason()),
         () -> {
-          var w = lockWork(work);
+          var w = mutationWork(work, actor, mechanic);
           if (!"IN_PROGRESS".equals(w.get("status"))) throw conflict("진행 중인 작업에서만 부품을 사용할 수 있습니다.");
           var locked = new LinkedHashMap<UUID, Map<String, Object>>();
           for (var line : lines) {
@@ -691,7 +796,7 @@ public class WorkService {
           for (var line : lines)
             movement(
                 key,
-                actor(email, true),
+                actor,
                 locked.get(line.partId()),
                 work,
                 null,
@@ -699,18 +804,29 @@ public class WorkService {
                 line.quantity(),
                 r.reason());
           return operation(key);
-        });
+        },
+        mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
   }
 
   public Map<String, Object> giveBack(String email, UUID key, UUID work, Return r) {
+    return giveBack(actor(email, true), null, key, work, r);
+  }
+
+  public Map<String, Object> mechanicGiveBack(
+      UUID actor, UUID mechanic, UUID key, UUID work, Return r) {
+    return giveBack(actor, mechanic, key, work, r);
+  }
+
+  private Map<String, Object> giveBack(
+      UUID actor, UUID mechanic, UUID key, UUID work, Return r) {
     BigDecimal amount = quantity(r.quantity());
     return command(
-        email,
+        actor,
         key,
         "return/" + work,
         new Return(r.originalUseId(), amount, r.reason()),
         () -> {
-          lockWork(work); // Also serializes all partial returns and state changes for this order.
+          mutationWork(work, actor, mechanic);
           var use =
               one(
                   "SELECT * FROM stock_movements WHERE id=? AND work_order_id=? AND kind='USE'",
@@ -739,8 +855,9 @@ public class WorkService {
           p.put("unit", use.get("unit"));
           p.put("unit_price", use.get("unit_price"));
           movement(
-              key, actor(email, true), p, work, r.originalUseId(), "RETURN", amount, r.reason());
+              key, actor, p, work, r.originalUseId(), "RETURN", amount, r.reason());
           return operation(key);
-        });
+        },
+        mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
   }
 }

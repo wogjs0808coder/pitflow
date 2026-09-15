@@ -258,7 +258,7 @@ export function BillingAdmin() {
                   {localTime(order.received_at)} · 입고{" "}
                   {order.received_mileage.toLocaleString()} km
                 </span>
-                <span>담당 {order.mechanic_name}</span>
+                <span>담당 {order.mechanic_name ?? "미배정"}</span>
               </button>
             ))
           ) : (

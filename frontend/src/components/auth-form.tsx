@@ -39,12 +39,12 @@ export function AuthForm({ register = false }: { register?: boolean }) {
           }),
         });
       }
-      await api<User>("/api/auth/login", {
+      const loggedIn = await api<User>("/api/auth/login", {
         method: "POST",
         body: new URLSearchParams({ email, password }),
       });
       await refresh();
-      router.replace("/dashboard");
+      router.replace(loggedIn.role === "MECHANIC" ? "/mechanic/work-orders" : "/dashboard");
     } catch (e) {
       setError(errorText(e));
     } finally {

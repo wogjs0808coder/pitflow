@@ -2,7 +2,7 @@ export type User = {
   id: string;
   email: string;
   name: string;
-  role: "CUSTOMER" | "ADMIN";
+  role: "CUSTOMER" | "ADMIN" | "MECHANIC";
 };
 export type Vehicle = {
   id: string;

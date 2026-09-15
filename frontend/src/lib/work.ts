@@ -72,8 +72,8 @@ export type Work = {
   vehicle_label: string;
   plate_number: string;
   received_mileage: number;
-  mechanic_id: string;
-  mechanic_name: string;
+  mechanic_id: string | null;
+  mechanic_name: string | null;
   status: WorkStatus;
   notes: string;
   received_at: string;

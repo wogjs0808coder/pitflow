@@ -3,6 +3,7 @@ package com.pitflow;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.fasterxml.jackson.databind.*;
 import com.pitflow.user.*;
@@ -25,6 +26,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class PhaseThreeIntegrationTest {
+  record MechanicActor(String email, UUID userId, UUID mechanicId) {}
+
   @Autowired MockMvc mvc;
   @Autowired ObjectMapper json;
   @Autowired JdbcTemplate db;
@@ -192,6 +195,50 @@ class PhaseThreeIntegrationTest {
 
   Object use(UUID p, String q) {
     return Map.of("lines", List.of(Map.of("partId", p, "quantity", q)), "reason", "정비 사용");
+  }
+
+  UUID mechanicAccount(String email, String code, boolean active) {
+    UUID account =
+        users
+            .saveAndFlush(new AppUser(email, "test-hash", code, AppUser.Role.MECHANIC))
+            .getId();
+    UUID profile = UUID.randomUUID();
+    db.update(
+        "INSERT INTO mechanics (id,user_id,code,name,active) VALUES (?,?,?,?,?)",
+        profile,
+        account,
+        code,
+        code,
+        active);
+    return profile;
+  }
+
+  MechanicActor assignedMechanic(String email) {
+    UUID account =
+        users
+            .saveAndFlush(new AppUser(email, "test-hash", "담당 정비사", AppUser.Role.MECHANIC))
+            .getId();
+    db.update("UPDATE mechanics SET user_id=? WHERE id=?", account, mechanic);
+    return new MechanicActor(email, account, mechanic);
+  }
+
+  MvcResult mechanicRequest(String method, String path, Object body, UUID key, String email)
+      throws Exception {
+    MockHttpServletRequestBuilder req = "POST".equals(method) ? post(path) : patch(path);
+    req.with(user(email).roles("MECHANIC")).with(csrf());
+    if (key != null) req.header("Idempotency-Key", key.toString());
+    return mvc.perform(
+            req.contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body)))
+        .andReturn();
+  }
+
+  JsonNode mechanicOk(String method, String path, Object body, UUID key, String email)
+      throws Exception {
+    var result = mechanicRequest(method, path, body, key, email);
+    assertThat(result.getResponse().getStatus())
+        .withFailMessage(result.getResponse().getContentAsString())
+        .isEqualTo(200);
+    return json.readTree(result.getResponse().getContentAsString());
   }
 
   String usePath(UUID w) {
@@ -570,6 +617,161 @@ class PhaseThreeIntegrationTest {
                 .getStatus())
         .isEqualTo(409);
     assertThat(count("work_orders")).isZero();
+  }
+
+  @Test
+  void receiveWithoutMechanicPreservesSnapshotsAndCanBeAssignedLater() throws Exception {
+    var actor = assignedMechanic("phase2e-receive@example.com");
+    db.update("UPDATE appointment_items SET quantity=2 WHERE appointment_id=?", appointment);
+    var body = new HashMap<String, Object>();
+    body.put("appointmentId", appointment);
+    body.put("receivedMileage", 27000);
+    body.put("mechanicId", null);
+    body.put("notes", "미배정 입고");
+    var received = ok("POST", "/api/admin/work-orders/from-appointment", body);
+    UUID work = UUID.fromString(received.get("id").asText());
+    assertThat(received.get("mechanic_id").isNull()).isTrue();
+    assertThat(received.get("mechanic_name").isNull()).isTrue();
+    assertThat(received.get("items").get(0).get("quantity").asInt()).isEqualTo(2);
+    assertThat(received.get("events").get(0).get("detail").asText()).contains("미배정");
+    assertThat(db.queryForObject("SELECT mileage FROM vehicles WHERE id=?", Integer.class, car))
+        .isEqualTo(27000);
+    mvc.perform(get("/api/mechanic/work-orders/" + work).with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isNotFound());
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + work + "/status",
+                    Map.of("status", "IN_PROGRESS"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + work + "/assignment",
+        Map.of("mechanicId", actor.mechanicId()));
+    mvc.perform(get("/api/mechanic/work-orders/" + work).with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void mechanicPartPickerIsMinimalAndRoleProtected() throws Exception {
+    var actor = assignedMechanic("phase2e-parts@example.com");
+    UUID available = part("P2E-PART", "1");
+    mvc.perform(get("/api/mechanic/parts").with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.id == '" + available + "')].sku").exists())
+        .andExpect(jsonPath("$[0].quantity").doesNotExist())
+        .andExpect(jsonPath("$[0].unit_price").doesNotExist());
+    mvc.perform(
+            get("/api/mechanic/parts")
+                .with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void adminCanAssignReassignReadAndClearCurrentMechanic() throws Exception {
+    UUID w = work(appointment);
+    var unassigned = new HashMap<String, Object>();
+    unassigned.put("mechanicId", null);
+    var cleared =
+        ok("PATCH", "/api/admin/work-orders/" + w + "/assignment", unassigned);
+    assertThat(cleared.get("mechanic_id").isNull()).isTrue();
+    assertThat(cleared.get("mechanic_name").isNull()).isTrue();
+
+    var assigned =
+        ok(
+            "PATCH",
+            "/api/admin/work-orders/" + w + "/assignment",
+            Map.of("mechanicId", mechanic));
+    assertThat(assigned.get("mechanic_id").asText()).isEqualTo(mechanic.toString());
+
+    UUID other =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/mechanics",
+                    Map.of("code", "M2", "name", "다른 정비사", "active", true))
+                .get("id")
+                .asText());
+    var reassigned =
+        ok(
+            "PATCH",
+            "/api/admin/work-orders/" + w + "/assignment",
+            Map.of("mechanicId", other));
+    assertThat(reassigned.get("mechanic_id").asText()).isEqualTo(other.toString());
+    assertThat(reassigned.get("mechanic_name").asText()).isEqualTo("다른 정비사");
+
+    mvc.perform(get("/api/admin/work-orders/" + w).with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.mechanic_id").value(other.toString()))
+        .andExpect(jsonPath("$.mechanic_name").value("다른 정비사"));
+    ok(
+        "PATCH",
+        "/api/admin/mechanics/" + other,
+        Map.of("code", "M2", "name", "다른 정비사", "active", false));
+    mvc.perform(get("/api/admin/work-orders/" + w).with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.mechanic_id").value(other.toString()))
+        .andExpect(jsonPath("$.mechanic_name").value("다른 정비사"));
+  }
+
+  @Test
+  void assignmentRejectsMissingInactiveAndNonAdminMechanics() throws Exception {
+    UUID w = work(appointment);
+    String path = "/api/admin/work-orders/" + w + "/assignment";
+    assertThat(
+            request(
+                    "PATCH",
+                    path,
+                    Map.of("mechanicId", UUID.randomUUID()),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+
+    UUID inactive =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/mechanics",
+                    Map.of("code", "M2", "name", "비활성 정비사", "active", false))
+                .get("id")
+                .asText());
+    assertThat(
+            request(
+                    "PATCH",
+                    path,
+                    Map.of("mechanicId", inactive),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            request(
+                    "PATCH",
+                    path,
+                    Map.of("mechanicId", mechanic),
+                    UUID.randomUUID(),
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    mvc.perform(
+            patch(path)
+                .with(user("phase2b-mechanic@example.com").roles("MECHANIC"))
+                .with(csrf())
+                .header("Idempotency-Key", UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("mechanicId", mechanic))))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -1119,6 +1321,421 @@ class PhaseThreeIntegrationTest {
     assertThat(movement.has("balance_after")).isFalse();
     assertThat(movement.has("actor_id")).isFalse();
     reconciles(p);
+  }
+
+  @Test
+  void mechanicCanReadOnlyOwnAssignedWorkOrders() throws Exception {
+    UUID account =
+        users
+            .saveAndFlush(
+                new AppUser(
+                    "assigned-mechanic@example.com", "test-hash", "담당 정비사", AppUser.Role.MECHANIC))
+            .getId();
+    db.update("UPDATE mechanics SET user_id=? WHERE id=?", account, mechanic);
+    UUID own = work(appointment);
+
+    UUID otherMechanic = mechanicAccount("other-mechanic@example.com", "P2C-OTHER", true);
+    UUID other = work(appointment());
+    db.update(
+        "UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?",
+        otherMechanic,
+        other);
+    UUID unassigned = work(appointment());
+    db.update(
+        "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", unassigned);
+
+    var mechanicUser = user("assigned-mechanic@example.com").roles("MECHANIC");
+    mvc.perform(get("/api/mechanic/work-orders").with(mechanicUser))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].id").value(own.toString()));
+    mvc.perform(get("/api/mechanic/work-orders/" + own).with(mechanicUser))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(own.toString()))
+        .andExpect(jsonPath("$.events[0].actor_id").doesNotExist());
+    mvc.perform(get("/api/mechanic/work-orders/" + other).with(mechanicUser))
+        .andExpect(status().isNotFound());
+    mvc.perform(get("/api/mechanic/work-orders/" + unassigned).with(mechanicUser))
+        .andExpect(status().isNotFound());
+    mvc.perform(
+            patch("/api/admin/work-orders/" + own + "/status")
+                .with(mechanicUser)
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"status\":\"IN_PROGRESS\"}"))
+        .andExpect(status().isForbidden());
+    assertThat(db.queryForObject("SELECT status FROM work_orders WHERE id=?", String.class, own))
+        .isEqualTo("RECEIVED");
+
+    mvc.perform(get("/api/admin/work-orders").with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(3));
+    mvc.perform(
+            get("/api/work-orders").with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(3));
+  }
+
+  @Test
+  void inactiveAndUnlinkedMechanicAccountsCannotReadWorkOrders() throws Exception {
+    mechanicAccount("inactive-mechanic@example.com", "P2C-INACTIVE", false);
+    users.saveAndFlush(
+        new AppUser(
+            "unlinked-mechanic@example.com", "test-hash", "미연결", AppUser.Role.MECHANIC));
+
+    mvc.perform(
+            get("/api/mechanic/work-orders")
+                .with(user("inactive-mechanic@example.com").roles("MECHANIC")))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            get("/api/mechanic/work-orders")
+                .with(user("unlinked-mechanic@example.com").roles("MECHANIC")))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void customerCannotUseMechanicWorkOrderEndpoints() throws Exception {
+    mvc.perform(
+            get("/api/mechanic/work-orders")
+                .with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void mechanicStateAndItemMutationsEnforceLockedOwnershipAndAuditUser() throws Exception {
+    var actor = assignedMechanic("phase2d-mechanic@example.com");
+    UUID own = work(appointment);
+    UUID otherProfile = mechanicAccount("phase2d-other@example.com", "P2D-OTHER", true);
+    UUID other = work(appointment());
+    db.update("UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?", otherProfile, other);
+    UUID unassigned = work(appointment());
+    db.update("UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", unassigned);
+
+    mechanicOk(
+        "PATCH",
+        "/api/mechanic/work-orders/" + own + "/status",
+        Map.of("status", "IN_PROGRESS"),
+        UUID.randomUUID(),
+        actor.email());
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + own + "/status",
+                    Map.of("status", "RECEIVED"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + other + "/status",
+                    Map.of("status", "IN_PROGRESS"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + unassigned + "/status",
+                    Map.of("status", "IN_PROGRESS"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+
+    UUID ownItem =
+        db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, own);
+    UUID otherItem =
+        db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, other);
+    mechanicOk(
+        "PATCH",
+        "/api/mechanic/work-orders/" + own + "/items/" + ownItem,
+        Map.of("done", true),
+        UUID.randomUUID(),
+        actor.email());
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + own + "/items/" + otherItem,
+                    Map.of("done", true),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    mechanicOk(
+        "PATCH",
+        "/api/mechanic/work-orders/" + own + "/status",
+        Map.of("status", "COMPLETED"),
+        UUID.randomUUID(),
+        actor.email());
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + own + "/items/" + ownItem,
+                    Map.of("done", false),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM work_order_events WHERE work_order_id=? AND event_type IN ('STATUS','ITEM') AND actor_id=?",
+                Integer.class,
+                own,
+                actor.userId()))
+        .isEqualTo(3);
+
+    db.update("UPDATE mechanics SET active=FALSE WHERE id=?", actor.mechanicId());
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + own + "/status",
+                    Map.of("status", "CANCELLED", "reason", "차단 확인"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    users.saveAndFlush(
+        new AppUser("phase2d-unlinked@example.com", "test-hash", "미연결", AppUser.Role.MECHANIC));
+    assertThat(
+            mechanicRequest(
+                    "PATCH",
+                    "/api/mechanic/work-orders/" + own + "/status",
+                    Map.of("status", "CANCELLED", "reason", "차단 확인"),
+                    UUID.randomUUID(),
+                    "phase2d-unlinked@example.com")
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    mvc.perform(
+            patch("/api/mechanic/work-orders/" + own + "/status")
+                .with(user("work-customer@example.com").roles("CUSTOMER"))
+                .with(csrf())
+                .header("Idempotency-Key", UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"status\":\"CANCELLED\",\"reason\":\"차단\"}"))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            post("/api/mechanic/work-orders/" + own + "/release")
+                .with(user(actor.email()).roles("MECHANIC"))
+                .with(csrf())
+                .header("Idempotency-Key", UUID.randomUUID()))
+        .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void mechanicUsePreservesInventoryRulesIdempotencyAndCurrentAssignment() throws Exception {
+    var actor = assignedMechanic("phase2d-use@example.com");
+    UUID own = running();
+    UUID ea =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/parts",
+                    Map.of(
+                        "sku", "P2D-EA",
+                        "name", "P2D-EA",
+                        "unit", "EA",
+                        "minimumQuantity", 0,
+                        "unitPrice", 10000,
+                        "active", true))
+                .get("id")
+                .asText());
+    ok(
+        "POST",
+        "/api/admin/parts/" + ea + "/receipts",
+        Map.of("quantity", "3", "reason", "실물 입고"));
+    String path = "/api/mechanic/work-orders/" + own + "/parts/use";
+    UUID key = UUID.randomUUID();
+    Object one = use(ea, "1");
+    mechanicOk("POST", path, one, key, actor.email());
+    mechanicOk("POST", path, one, key, actor.email());
+    assertThat(balance(ea)).isEqualByComparingTo("2");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM stock_movements WHERE work_order_id=? AND part_id=? AND kind='USE' AND actor_id=?",
+                Integer.class,
+                own,
+                ea,
+                actor.userId()))
+        .isEqualTo(1);
+    assertThat(
+            mechanicRequest("POST", path, use(ea, "2"), key, actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            mechanicRequest("POST", path, use(ea, "0.5"), UUID.randomUUID(), actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(400);
+    assertThat(
+            mechanicRequest("POST", path, use(ea, "3"), UUID.randomUUID(), actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+
+    UUID otherProfile = mechanicAccount("phase2d-use-other@example.com", "P2D-USE-OTHER", true);
+    db.update("UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?", otherProfile, own);
+    assertThat(
+            mechanicRequest("POST", path, one, UUID.randomUUID(), actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    assertThat(
+            mechanicRequest("POST", path, one, key, actor.email()).getResponse().getStatus())
+        .isEqualTo(404);
+
+    UUID unassigned = work(appointment());
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + unassigned + "/status",
+        Map.of("status", "IN_PROGRESS"));
+    db.update("UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", unassigned);
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + unassigned + "/parts/use",
+                    one,
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    assertThat(balance(ea)).isEqualByComparingTo("2");
+  }
+
+  @Test
+  void mechanicReturnPreservesOriginalUseNetQuantityAuditAndReplay() throws Exception {
+    var actor = assignedMechanic("phase2d-return@example.com");
+    UUID own = running();
+    UUID liquid = part("P2D-L", "2");
+    mechanicOk(
+        "POST",
+        "/api/mechanic/work-orders/" + own + "/parts/use",
+        use(liquid, "1"),
+        UUID.randomUUID(),
+        actor.email());
+    UUID original =
+        db.queryForObject(
+            "SELECT id FROM stock_movements WHERE work_order_id=? AND part_id=? AND kind='USE'",
+            UUID.class,
+            own,
+            liquid);
+    String path = "/api/mechanic/work-orders/" + own + "/parts/return";
+    UUID key = UUID.randomUUID();
+    Object half = Map.of("originalUseId", original, "quantity", "0.5", "reason", "실물 반환");
+    mechanicOk("POST", path, half, key, actor.email());
+    mechanicOk("POST", path, half, key, actor.email());
+    assertThat(balance(liquid)).isEqualByComparingTo("1.5");
+    UUID returnedOriginal =
+        db.queryForObject(
+            "SELECT original_use_id FROM stock_movements WHERE work_order_id=? AND kind='RETURN'",
+            UUID.class,
+            own);
+    assertThat(returnedOriginal).isEqualTo(original);
+    assertThat(
+            db.queryForObject(
+                "SELECT actor_id FROM stock_movements WHERE work_order_id=? AND kind='RETURN'",
+                UUID.class,
+                own))
+        .isEqualTo(actor.userId());
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    path,
+                    Map.of("originalUseId", original, "quantity", "0.25", "reason", "다른 payload"),
+                    key,
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    path,
+                    Map.of("originalUseId", original, "quantity", "0.75", "reason", "초과"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+
+    UUID another = work(appointment());
+    ok("PATCH", "/api/admin/work-orders/" + another + "/status", Map.of("status", "IN_PROGRESS"));
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + another + "/parts/return",
+                    half,
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    UUID otherProfile = mechanicAccount("phase2d-return-other@example.com", "P2D-RETURN-OTHER", true);
+    db.update("UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?", otherProfile, own);
+    assertThat(
+            mechanicRequest("POST", path, half, UUID.randomUUID(), actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    db.update("UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", another);
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + another + "/parts/return",
+                    half,
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+    assertThat(balance(liquid)).isEqualByComparingTo("1.5");
+  }
+
+  @Test
+  void mechanicUseAndAdminReassignmentSerializeOnWorkOrderLock() throws Exception {
+    var actor = assignedMechanic("phase2d-race@example.com");
+    UUID work = running();
+    UUID part = part("P2D-RACE", "1");
+    UUID replacement = mechanicAccount("phase2d-replacement@example.com", "P2D-REPLACE", true);
+    var statuses =
+        race(
+            () ->
+                mechanicRequest(
+                        "POST",
+                        "/api/mechanic/work-orders/" + work + "/parts/use",
+                        use(part, "1"),
+                        UUID.randomUUID(),
+                        actor.email())
+                    .getResponse()
+                    .getStatus(),
+            () ->
+                request(
+                        "PATCH",
+                        "/api/admin/work-orders/" + work + "/assignment",
+                        Map.of("mechanicId", replacement),
+                        UUID.randomUUID(),
+                        admin,
+                        true)
+                    .getResponse()
+                    .getStatus());
+    assertThat(statuses.get(1)).isEqualTo(200);
+    assertThat(statuses.get(0)).isIn(200, 404);
+    assertThat(balance(part)).isEqualByComparingTo(statuses.get(0) == 200 ? "0" : "1");
+    assertThat(
+            db.queryForObject(
+                "SELECT mechanic_id FROM work_orders WHERE id=?", UUID.class, work))
+        .isEqualTo(replacement);
   }
 
   @Test
