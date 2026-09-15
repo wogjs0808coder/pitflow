@@ -1323,58 +1323,96 @@ class PhaseThreeIntegrationTest {
     reconciles(p);
   }
 
-  @Test
-  void mechanicCanReadOnlyOwnAssignedWorkOrders() throws Exception {
-    UUID account =
-        users
-            .saveAndFlush(
-                new AppUser(
-                    "assigned-mechanic@example.com", "test-hash", "담당 정비사", AppUser.Role.MECHANIC))
-            .getId();
-    db.update("UPDATE mechanics SET user_id=? WHERE id=?", account, mechanic);
-    UUID own = work(appointment);
+    @Test
+    void mechanicCanReadOnlyOwnAssignedWorkOrders() throws Exception {
+        UUID account =
+            users
+                .saveAndFlush(
+                    new AppUser(
+                        "assigned-mechanic@example.com", "test-hash", "담당 정비사", AppUser.Role.MECHANIC))
+                .getId();
+        db.update("UPDATE mechanics SET user_id=? WHERE id=?", account, mechanic);
 
-    UUID otherMechanic = mechanicAccount("other-mechanic@example.com", "P2C-OTHER", true);
-    UUID other = work(appointment());
-    db.update(
-        "UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?",
-        otherMechanic,
-        other);
-    UUID unassigned = work(appointment());
-    db.update(
-        "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", unassigned);
+        UUID suggestedPart = part("P2C-SUGGESTED", "1");
+        db.update(
+            """
+            INSERT INTO service_part_requirements
+            (service_id, part_id, required_quantity, quantity_confirmed)
+            VALUES (?, ?, ?, ?)
+            """,
+            serviceItem,
+            suggestedPart,
+            new BigDecimal("1"),
+            true);
 
-    var mechanicUser = user("assigned-mechanic@example.com").roles("MECHANIC");
-    mvc.perform(get("/api/mechanic/work-orders").with(mechanicUser))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.length()").value(1))
-        .andExpect(jsonPath("$[0].id").value(own.toString()));
-    mvc.perform(get("/api/mechanic/work-orders/" + own).with(mechanicUser))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.id").value(own.toString()))
-        .andExpect(jsonPath("$.events[0].actor_id").doesNotExist());
-    mvc.perform(get("/api/mechanic/work-orders/" + other).with(mechanicUser))
-        .andExpect(status().isNotFound());
-    mvc.perform(get("/api/mechanic/work-orders/" + unassigned).with(mechanicUser))
-        .andExpect(status().isNotFound());
-    mvc.perform(
-            patch("/api/admin/work-orders/" + own + "/status")
-                .with(mechanicUser)
-                .with(csrf())
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"status\":\"IN_PROGRESS\"}"))
-        .andExpect(status().isForbidden());
-    assertThat(db.queryForObject("SELECT status FROM work_orders WHERE id=?", String.class, own))
-        .isEqualTo("RECEIVED");
+        UUID own = work(appointment);
 
-    mvc.perform(get("/api/admin/work-orders").with(user(admin).roles("ADMIN")))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.length()").value(3));
-    mvc.perform(
-            get("/api/work-orders").with(user("work-customer@example.com").roles("CUSTOMER")))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.length()").value(3));
-  }
+        UUID otherMechanic = mechanicAccount("other-mechanic@example.com", "P2C-OTHER", true);
+        UUID other = work(appointment());
+        db.update(
+            "UPDATE work_orders SET mechanic_id=?,mechanic_name='다른 정비사' WHERE id=?",
+            otherMechanic,
+            other);
+        UUID unassigned = work(appointment());
+        db.update(
+            "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", unassigned);
+
+        var mechanicUser = user("assigned-mechanic@example.com").roles("MECHANIC");
+        mvc.perform(get("/api/mechanic/work-orders").with(mechanicUser))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].id").value(own.toString()));
+
+        mvc.perform(get("/api/mechanic/work-orders/" + own).with(mechanicUser))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(own.toString()))
+            .andExpect(jsonPath("$.events[0].actor_id").doesNotExist())
+            .andExpect(jsonPath("$.suggested_parts.length()").value(1))
+            .andExpect(jsonPath("$.suggested_parts[0].id").value(suggestedPart.toString()))
+            .andExpect(jsonPath("$.suggested_parts[0].name").value("P2C-SUGGESTED"))
+            .andExpect(jsonPath("$.suggested_parts[0].unit").value("L"))
+            .andExpect(jsonPath("$.suggested_parts[0].quantity").doesNotExist())
+            .andExpect(jsonPath("$.suggested_parts[0].unit_price").doesNotExist())
+            .andExpect(jsonPath("$.suggested_parts[0].minimum_quantity").doesNotExist());
+
+        mvc.perform(get("/api/mechanic/work-orders/" + other).with(mechanicUser))
+            .andExpect(status().isNotFound());
+        mvc.perform(get("/api/mechanic/work-orders/" + unassigned).with(mechanicUser))
+            .andExpect(status().isNotFound());
+
+        mvc.perform(
+                patch("/api/admin/work-orders/" + own + "/status")
+                    .with(mechanicUser)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"status\":\"IN_PROGRESS\"}"))
+            .andExpect(status().isForbidden());
+
+        assertThat(db.queryForObject("SELECT status FROM work_orders WHERE id=?", String.class, own))
+            .isEqualTo("RECEIVED");
+
+        mvc.perform(get("/api/admin/work-orders").with(user(admin).roles("ADMIN")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(3));
+
+        mvc.perform(get("/api/admin/work-orders/" + own).with(user(admin).roles("ADMIN")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.suggested_parts.length()").value(1))
+            .andExpect(jsonPath("$.suggested_parts[0].id").value(suggestedPart.toString()))
+            .andExpect(jsonPath("$.suggested_parts[0].quantity").exists());
+
+        mvc.perform(
+                get("/api/work-orders").with(user("work-customer@example.com").roles("CUSTOMER")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(3));
+
+        mvc.perform(
+                get("/api/work-orders/" + own)
+                    .with(user("work-customer@example.com").roles("CUSTOMER")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(own.toString()))
+            .andExpect(jsonPath("$.suggested_parts").doesNotExist());
+    }
 
   @Test
   void inactiveAndUnlinkedMechanicAccountsCannotReadWorkOrders() throws Exception {

@@ -446,8 +446,18 @@ public class WorkService {
   }
 
   public Map<String, Object> mechanicDetail(UUID mechanic, UUID work) {
-    var result = clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic));
-    return detail(result, work, false);
+    var result =
+        clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic));
+    var detail = detail(result, work, false);
+    detail.put(
+        "suggested_parts",
+        rows(
+            "SELECT DISTINCT p.id,p.name,p.unit FROM"
+                + " service_part_requirements r JOIN work_order_items i ON"
+                + " i.service_item_id=r.service_id JOIN parts p ON p.id=r.part_id WHERE"
+                + " i.work_order_id=? ORDER BY p.name",
+            work));
+    return detail;
   }
 
   private Map<String, Object> detail(Map<String, Object> result, UUID work, boolean admin) {
