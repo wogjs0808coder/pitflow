@@ -3,6 +3,7 @@ package com.pitflow.work;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pitflow.common.ApiException;
+import com.pitflow.notification.NotificationService;
 import com.pitflow.work.WorkRequests.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -24,17 +25,23 @@ public class WorkService {
   private final ObjectMapper json;
   private final TransactionTemplate tx;
   private final Clock clock;
+  private final NotificationService notificationService;
   private static final BigDecimal MAX_QUANTITY = new BigDecimal("99999999999.999");
   private static final UUID WASHER_SERVICE =
       UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
   private static final String WASHER_SKU = "PF-WASHER";
 
   public WorkService(
-      JdbcTemplate db, ObjectMapper json, PlatformTransactionManager manager, Clock clock) {
+      JdbcTemplate db,
+      ObjectMapper json,
+      PlatformTransactionManager manager,
+      Clock clock,
+      NotificationService notificationService) {
     this.db = db;
     this.json = json;
     this.tx = new TransactionTemplate(manager);
     this.clock = clock;
+    this.notificationService = notificationService;
     this.tx.setTimeout(15);
   }
 
@@ -419,6 +426,9 @@ public class WorkService {
                   + r.receivedMileage()
                   + " km · "
                   + (m == null ? "미배정" : m.get("name")));
+          if (m != null && m.get("user_id") != null) {
+            notificationService.notifyWorkAssigned(id(m, "user_id"), work);
+          }
           return detail(email, work, true);
         });
   }
@@ -543,6 +553,9 @@ public class WorkService {
               actor,
               "STATUS",
               current + " → " + target + (r.reason() == null ? "" : " · " + r.reason().strip()));
+          if (mechanic != null && target.equals("COMPLETED")) {
+            notificationService.notifyWorkCompletedToAdmins(work);
+          }
           // Cancellation never invents a physical return. Existing USE rows remain intact.
           return mutationDetail(work, adminResponse);
         },
@@ -573,7 +586,8 @@ public class WorkService {
         "assignment/" + work,
         r,
         () -> {
-          editable(lockWork(work));
+          var currentWork = lockWork(work);
+          editable(currentWork);
           if (r.mechanicId() == null) {
             db.update(
                 "UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", work);
@@ -588,6 +602,10 @@ public class WorkService {
               m.get("name"),
               work);
           event(work, actor(email, true), "ASSIGNED", m.get("name").toString());
+          if (m.get("user_id") != null
+              && !Objects.equals(currentWork.get("mechanic_id"), r.mechanicId())) {
+            notificationService.notifyWorkAssigned(id(m, "user_id"), work);
+          }
           return detail(email, work, true);
         });
   }
