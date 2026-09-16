@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "./auth-provider";
 import { errorText } from "@/lib/api";
+import { NotificationCenter } from "./notification-center";
 export function Shell({ children }: { children: React.ReactNode }) {
   const { user, loading, error, refresh, logout } = useAuth();
   const [logoutError, setLogoutError] = useState("");
@@ -138,7 +139,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <div className="workspace">
         <header className="topbar">
           <span>차량 정비 관리</span>
-          <span className="topbar-account">{user.email}</span>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+            }}
+          >
+            <NotificationCenter />
+            <span className="topbar-account">{user.email}</span>
+          </div>
         </header>
         <main id="main">{children}</main>
         <footer>© {new Date().getFullYear()} PitFlow</footer>

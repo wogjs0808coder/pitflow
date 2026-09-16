@@ -35,6 +35,7 @@ export function WorkOrders({
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [parts, setParts] = useState<PickerPart[]>([]);
   const [selected, setSelected] = useState("");
+  const [requestedWorkOrderId, setRequestedWorkOrderId] = useState("");
   const [detail, setDetail] = useState<WorkDetail | null>(null);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
@@ -60,6 +61,11 @@ export function WorkOrders({
     setRevision((n) => n + 1);
   }, []);
   const command = useWorkCommand(reload);
+
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("workOrderId");
+    if (id) setRequestedWorkOrderId(id);
+  }, []);
   useEffect(() => {
     if (!permitted) return;
     const c = new AbortController();
@@ -92,6 +98,16 @@ export function WorkOrders({
       });
     return () => c.abort();
   }, [base, admin, mechanic, permitted, revision]);
+  useEffect(() => {
+    if (!requestedWorkOrderId || !permitted) return;
+
+    if (orders.some((order) => order.id === requestedWorkOrderId)) {
+      setQuery("");
+      setFilter("all");
+      setSelected(requestedWorkOrderId);
+    }
+  }, [requestedWorkOrderId, orders, permitted]);
+
   useEffect(() => {
     setDetail(null);
     if (!selected || !permitted) return;
