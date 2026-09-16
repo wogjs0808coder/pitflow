@@ -75,6 +75,7 @@ class PhaseThreeIntegrationTest {
 
   @AfterEach
   void clean() {
+    db.update("DELETE FROM notifications");
     // Disposable test DB only: production has no delete endpoints for these records.
     db.update("DELETE FROM stock_movements WHERE kind='RETURN'");
     db.update("DELETE FROM stock_movements");
@@ -263,6 +264,156 @@ class PhaseThreeIntegrationTest {
     assertThat(balance(p)).isEqualByComparingTo(net);
   }
 
+  int notificationCount(UUID recipient, String type, UUID work) {
+    return db.queryForObject(
+        """
+        SELECT COUNT(*)
+        FROM notifications
+        WHERE recipient_user_id=?
+          AND type=?
+          AND work_order_id=?
+        """,
+        Integer.class,
+        recipient,
+        type,
+        work);
+  }
+
+  @Test
+  void workAssignmentNotificationsCoverReceiveReassignAndSameMechanic() throws Exception {
+    var actor = assignedMechanic("phase3b-assigned@example.com");
+
+    UUID work = work(appointment);
+
+    assertThat(notificationCount(actor.userId(), "WORK_ASSIGNED", work))
+        .isEqualTo(1);
+
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + work + "/assignment",
+        Map.of("mechanicId", actor.mechanicId()));
+
+    assertThat(notificationCount(actor.userId(), "WORK_ASSIGNED", work))
+        .isEqualTo(1);
+
+    UUID replacement =
+        mechanicAccount(
+            "phase3b-replacement@example.com",
+            "P3B-REPLACE",
+            true);
+
+    UUID replacementUser =
+        db.queryForObject(
+            "SELECT user_id FROM mechanics WHERE id=?",
+            UUID.class,
+            replacement);
+
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + work + "/assignment",
+        Map.of("mechanicId", replacement));
+
+    assertThat(notificationCount(replacementUser, "WORK_ASSIGNED", work))
+        .isEqualTo(1);
+
+    assertThat(notificationCount(actor.userId(), "WORK_ASSIGNED", work))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void laterAssignmentNotifiesMechanicAndMechanicCompletionNotifiesAdmins() throws Exception {
+    var actor = assignedMechanic("phase3b-complete@example.com");
+
+    var receive = new HashMap<String, Object>();
+    receive.put("appointmentId", appointment);
+    receive.put("receivedMileage", 27000);
+    receive.put("mechanicId", null);
+    receive.put("notes", "미배정 입고");
+
+    UUID work =
+        UUID.fromString(
+            ok(
+                    "POST",
+                    "/api/admin/work-orders/from-appointment",
+                    receive)
+                .get("id")
+                .asText());
+
+    assertThat(
+            db.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE work_order_id=?
+                  AND type='WORK_ASSIGNED'
+                """,
+                Integer.class,
+                work))
+        .isZero();
+
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + work + "/assignment",
+        Map.of("mechanicId", actor.mechanicId()));
+
+    assertThat(notificationCount(actor.userId(), "WORK_ASSIGNED", work))
+        .isEqualTo(1);
+
+    mechanicOk(
+        "PATCH",
+        "/api/mechanic/work-orders/" + work + "/status",
+        Map.of("status", "IN_PROGRESS"),
+        UUID.randomUUID(),
+        actor.email());
+
+    UUID item =
+        db.queryForObject(
+            "SELECT id FROM work_order_items WHERE work_order_id=?",
+            UUID.class,
+            work);
+
+    mechanicOk(
+        "PATCH",
+        "/api/mechanic/work-orders/" + work + "/items/" + item,
+        Map.of("done", true),
+        UUID.randomUUID(),
+        actor.email());
+
+    mechanicOk(
+        "PATCH",
+        "/api/mechanic/work-orders/" + work + "/status",
+        Map.of("status", "COMPLETED"),
+        UUID.randomUUID(),
+        actor.email());
+
+    assertThat(
+            db.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications n
+                JOIN users u ON u.id=n.recipient_user_id
+                WHERE n.work_order_id=?
+                  AND n.type='WORK_COMPLETED'
+                  AND u.role='ADMIN'
+                """,
+                Integer.class,
+                work))
+        .isEqualTo(2);
+
+    assertThat(
+            db.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications n
+                JOIN users u ON u.id=n.recipient_user_id
+                WHERE n.work_order_id=?
+                  AND n.type='WORK_COMPLETED'
+                  AND u.role<>'ADMIN'
+                """,
+                Integer.class,
+                work))
+        .isZero();
+  }
   @Test
   void washerUsesActualFractionalQuantityOnlyOncePerWorkOrder() throws Exception {
     UUID washerService =

@@ -56,6 +56,30 @@ public class NotificationService {
         .forEach(Notification::markRead);
   }
 
+  @Transactional
+  public void notifyWorkAssigned(UUID recipientUserId, UUID workOrderId) {
+    notifications.save(
+        new Notification(
+            recipientUserId,
+            Notification.Type.WORK_ASSIGNED,
+            "새 정비 작업이 배정되었습니다.",
+            "담당 정비 작업이 배정되었습니다.",
+            workOrderId));
+  }
+
+  @Transactional
+  public void notifyWorkCompletedToAdmins(UUID workOrderId) {
+    users.findAllByRole(AppUser.Role.ADMIN)
+        .forEach(
+            admin ->
+                notifications.save(
+                    new Notification(
+                        admin.getId(),
+                        Notification.Type.WORK_COMPLETED,
+                        "정비 작업이 완료되었습니다.",
+                        "정비사가 담당 작업을 완료했습니다.",
+                        workOrderId)));
+  }
   private UUID requireUserId(String email) {
     return users
         .findByEmail(email)
