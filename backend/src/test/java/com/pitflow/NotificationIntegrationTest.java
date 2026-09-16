@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.pitflow.user.AppUser;
 import com.pitflow.user.UserRepository;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -172,6 +173,6 @@ class NotificationIntegrationTest {
         type,
         title,
         "Test notification",
-        createdAt);
+        Timestamp.from(createdAt));
   }
 }
