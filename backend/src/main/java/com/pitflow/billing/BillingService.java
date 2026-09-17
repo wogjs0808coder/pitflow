@@ -131,7 +131,7 @@ public class BillingService {
     var lines = new ArrayList<Map<String, Object>>();
     var complimentarySources = new HashSet<UUID>();
     for (var i :
-        db.queryForList("SELECT * FROM work_order_items WHERE work_order_id=? ORDER BY id", w))
+        db.queryForList("SELECT * FROM work_order_items WHERE work_order_id=? AND status='COMPLETED' ORDER BY id", w))
       lines.add(
           line(
               "LABOR",

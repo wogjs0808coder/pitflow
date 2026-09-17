@@ -405,14 +405,15 @@ public class WorkService {
                   r.appointmentId()))
             db.update(
                 "INSERT INTO work_order_items"
-                    + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes) VALUES"
-                    + " (?,?,?,?,?,?)",
+                    + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes,status,done) VALUES"
+                    + " (?,?,?,?,?,?,?,FALSE)",
                 UUID.randomUUID(),
                 work,
                 item.get("service_item_id"),
                 item.get("name"),
                 item.get("labor_price"),
-                item.get("duration_minutes"));
+                item.get("duration_minutes"),
+                "PENDING");
           db.update(
               "UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?",
               r.receivedMileage(),
@@ -635,7 +636,8 @@ public class WorkService {
           if (!allowed.contains(target)) throw conflict("허용되지 않은 작업 상태 변경입니다.");
           if (target.equals("COMPLETED")
               && db.queryForObject(
-                      "SELECT COUNT(*) FROM work_order_items WHERE work_order_id=? AND done=FALSE",
+                      "SELECT COUNT(*) FROM work_order_items WHERE work_order_id=?"
+                          + " AND status NOT IN ('COMPLETED','SKIPPED')",
                       Integer.class,
                       work)
                   > 0) throw conflict("모든 정비 항목을 완료 처리한 후 작업을 완료해 주세요.");
@@ -733,9 +735,23 @@ public class WorkService {
           editable(w);
           if (!"IN_PROGRESS".equals(w.get("status"))) throw conflict("진행 중인 작업에서 정비 항목을 변경해 주세요.");
           var i = one("SELECT * FROM work_order_items WHERE id=? AND work_order_id=?", item, work);
-          db.update("UPDATE work_order_items SET done=? WHERE id=?", r.done(), item);
-          event(
-              work, actor, "ITEM", i.get("name") + " · " + (r.done() ? "완료" : "미완료"));
+          boolean hasStatus = r.status() != null;
+          boolean hasDone = r.done() != null;
+          if (hasStatus == hasDone) throw bad("status 또는 done 중 하나만 입력해 주세요.");
+          String target = hasStatus ? r.status().name() : (r.done() ? "COMPLETED" : "IN_PROGRESS");
+          String current = i.get("status") == null ? (Boolean.TRUE.equals(i.get("done")) ? "COMPLETED" : "PENDING") : i.get("status").toString();
+          if (current.equals(target)) return mutationDetail(work, adminResponse);
+          var allowed = switch (current) {
+            case "PENDING", "IN_PROGRESS" -> Set.of("PENDING", "IN_PROGRESS", "COMPLETED", "WAITING_PARTS", "SKIPPED");
+            case "WAITING_PARTS" -> Set.of("IN_PROGRESS", "COMPLETED", "SKIPPED");
+            case "COMPLETED", "SKIPPED" -> Set.of("IN_PROGRESS");
+            default -> Set.<String>of();
+          };
+          if (!allowed.contains(target)) throw conflict("허용되지 않는 정비 항목 상태 변경입니다.");
+          String reason = r.reason() == null ? null : r.reason().strip();
+          if (target.equals("SKIPPED") && (reason == null || reason.isBlank())) throw bad("건너뛴 사유를 입력해 주세요.");
+          db.update("UPDATE work_order_items SET status=?,done=?,skip_reason=? WHERE id=?", target, target.equals("COMPLETED"), target.equals("SKIPPED") ? reason : null, item);
+          event(work, actor, "ITEM", i.get("name") + " · " + current + " → " + target + (target.equals("SKIPPED") ? " · " + reason : ""));
           return mutationDetail(work, adminResponse);
         },
         mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
