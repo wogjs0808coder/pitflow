@@ -193,7 +193,13 @@ export function WorkOrders({
         <div>
           <span className="eyebrow">SERVICE WORK</span>
           <h1>{admin ? "정비 작업 관리" : mechanic ? "내 담당 작업" : "내 정비 작업"}</h1>
-          <p>입고부터 완료까지 작업 상태와 부품 사용 내역을 확인하세요.</p>
+          <p>
+            {admin
+              ? "입고부터 정비 진행, 부품 대기, 완료와 출고까지 현재 작업 상황을 한눈에 확인하세요."
+              : mechanic
+                ? "배정된 차량과 정비 항목을 확인하고 작업을 처리하세요."
+                : "입고부터 완료까지 작업 상태와 부품 사용 내역을 확인하세요."}
+          </p>
         </div>
         <button
           className="button secondary"
@@ -214,8 +220,99 @@ export function WorkOrders({
           {formError}
         </div>
       )}
+
+      {mechanic && (
+        <section
+          className="mechanic-work-overview"
+          aria-label="내 작업 현황"
+        >
+          <div>
+            <span>내 작업</span>
+            <strong>{orders.length}</strong>
+          </div>
+
+          <div>
+            <span>입고</span>
+            <strong>
+              {orders.filter(
+                (w) => !w.released_at && w.status === "RECEIVED",
+              ).length}
+            </strong>
+          </div>
+
+          <div>
+            <span>작업 중</span>
+            <strong>
+              {orders.filter(
+                (w) => !w.released_at && w.status === "IN_PROGRESS",
+              ).length}
+            </strong>
+          </div>
+
+          <div>
+            <span>부품 대기</span>
+            <strong>
+              {orders.filter(
+                (w) => !w.released_at && w.status === "WAITING_PARTS",
+              ).length}
+            </strong>
+          </div>
+        </section>
+      )}
+
       {admin && (
-        <details className="work-panel" open>
+        <section
+          className="admin-work-overview"
+          aria-label="현재 정비 작업 현황"
+        >
+          <div>
+            <span>입고 대기</span>
+            <strong>
+              {orders.filter((w) => !w.released_at && w.status === "RECEIVED").length}
+            </strong>
+          </div>
+
+          <div>
+            <span>작업 중</span>
+            <strong>
+              {orders.filter(
+                (w) => !w.released_at && w.status === "IN_PROGRESS",
+              ).length}
+            </strong>
+          </div>
+
+          <div className="attention">
+            <span>부품 대기</span>
+            <strong>
+              {orders.filter(
+                (w) => !w.released_at && w.status === "WAITING_PARTS",
+              ).length}
+            </strong>
+          </div>
+
+          <div>
+            <span>출고 대기</span>
+            <strong>
+              {orders.filter(
+                (w) => !w.released_at && w.status === "COMPLETED",
+              ).length}
+            </strong>
+          </div>
+
+          <div>
+            <span>출고 완료</span>
+            <strong>{orders.filter((w) => !!w.released_at).length}</strong>
+          </div>
+
+          <div>
+            <span>전체 작업</span>
+            <strong>{orders.length}</strong>
+          </div>
+        </section>
+      )}
+
+      {admin && (
+        <details className="work-panel admin-intake-panel" open>
           <summary>예약 확인 및 입고 처리</summary>
           <p>
             날짜를 선택하면 대기·확정 예약도 표시됩니다. 예약 확정 → 방문 처리 →
@@ -396,7 +493,15 @@ export function WorkOrders({
           )}
         </details>
       )}
-      <div className="management-toolbar">
+      <div
+        className={
+          admin
+            ? "management-toolbar admin-management-toolbar"
+            : mechanic
+              ? "management-toolbar mechanic-management-toolbar"
+              : "management-toolbar"
+        }
+      >
         <div className="management-tabs" aria-label="작업 상태 필터">
           {stages.map(([key, label]) => (
             <button
@@ -419,15 +524,36 @@ export function WorkOrders({
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="차량번호, 차종, 담당 정비사"
+            placeholder={
+              mechanic
+                ? "차량번호 또는 차종"
+                : "차량번호, 차종, 담당 정비사"
+            }
           />
         </label>
       </div>
       {loading ? (
         <p role="status">작업 목록을 불러오는 중입니다…</p>
       ) : (
-        <div className="work-layout">
-          <section aria-label="작업 목록" className="work-list management-list">
+        <div
+          className={
+            admin
+              ? "work-layout admin-work-layout"
+              : mechanic
+                ? "work-layout mechanic-work-layout"
+                : "work-layout"
+          }
+        >
+          <section
+            aria-label="작업 목록"
+            className={
+              admin
+                ? "work-list management-list admin-management-list"
+                : mechanic
+                  ? "work-list management-list mechanic-management-list"
+                  : "work-list management-list"
+            }
+          >
             {shown.map((w) => (
               <button
                 key={w.id}
@@ -443,15 +569,28 @@ export function WorkOrders({
                       ? "정비 완료 · 출고 대기"
                       : workLabel[w.status]}
                 </span>
-                {w.released_at && <span>출고 {localTime(w.released_at)}</span>}
-                <strong>
-                  {w.vehicle_label} · {w.plate_number}
+                {w.released_at && (
+                  <span className="work-release-time">
+                    출고 {localTime(w.released_at)}
+                  </span>
+                )}
+
+                <strong className="work-list-vehicle">
+                  {w.vehicle_label}
                 </strong>
-                <span>
-                  {localTime(w.received_at)} ·{" "}
+
+                <span className="work-list-plate">
+                  {w.plate_number}
+                </span>
+
+                <span className="work-list-received">
+                  입고 {localTime(w.received_at)} ·{" "}
                   {w.received_mileage.toLocaleString()} km
                 </span>
-                <span>담당 {w.mechanic_name ?? "미배정"}</span>
+
+                <span className="work-list-mechanic">
+                  담당 {w.mechanic_name ?? "미배정"}
+                </span>
               </button>
             ))}
             {!shown.length && !error && (
@@ -463,8 +602,16 @@ export function WorkOrders({
           </section>
           <section aria-label="작업 상세">
             {detail ? (
-              <div className="work-panel">
-                <h2>
+              <div
+                className={
+                  admin
+                    ? "work-panel admin-work-detail"
+                    : mechanic
+                      ? "work-panel mechanic-work-detail"
+                      : "work-panel"
+                }
+              >
+                <h2 className="work-detail-title">
                   {detail.plate_number} · {workLabel[detail.status]}
                 </h2>
                 <p>
@@ -472,6 +619,69 @@ export function WorkOrders({
                   {detail.mechanic_name ?? "미배정"}
                 </p>
                 <p className="booking-notes">{detail.notes}</p>
+
+                {admin && (
+                  <div className="admin-work-facts">
+                    <div>
+                      <span>차량</span>
+                      <strong>{detail.vehicle_label}</strong>
+                    </div>
+
+                    <div>
+                      <span>차량번호</span>
+                      <strong>{detail.plate_number}</strong>
+                    </div>
+
+                    <div>
+                      <span>담당 정비사</span>
+                      <strong>{detail.mechanic_name ?? "미배정"}</strong>
+                    </div>
+
+                    <div>
+                      <span>입고 주행거리</span>
+                      <strong>
+                        {detail.received_mileage.toLocaleString()} km
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>입고 시각</span>
+                      <strong>{localTime(detail.received_at)}</strong>
+                    </div>
+
+                    <div>
+                      <span>정비 항목</span>
+                      <strong>{detail.items.length}건</strong>
+                    </div>
+                  </div>
+                )}
+
+                {mechanic && (
+                  <div className="mechanic-work-facts">
+                    <div>
+                      <span>차량</span>
+                      <strong>{detail.vehicle_label}</strong>
+                    </div>
+
+                    <div>
+                      <span>차량번호</span>
+                      <strong>{detail.plate_number}</strong>
+                    </div>
+
+                    <div>
+                      <span>주행거리</span>
+                      <strong>
+                        {detail.received_mileage.toLocaleString()} km
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>정비 항목</span>
+                      <strong>{detail.items.length}건</strong>
+                    </div>
+                  </div>
+                )}
+
                 {detail.released_at ? (
                   <div className="notice">
                     <strong>출고 완료</strong> · {localTime(detail.released_at)}
@@ -526,7 +736,15 @@ export function WorkOrders({
                   ).length;
                   const active = detail.items.length - completed - skipped - waitingParts;
                   return (
-                    <p className="muted">
+                    <p
+                      className={
+                        admin
+                          ? "admin-item-summary"
+                          : mechanic
+                            ? "mechanic-item-summary"
+                            : "muted"
+                      }
+                    >
                       정비 항목 · 완료 {completed} · 건너뜀 {skipped} · 부품 대기 {waitingParts} · 진행/대기 {active}
                     </p>
                   );
@@ -552,6 +770,7 @@ export function WorkOrders({
                       </span>
                       {(admin || mechanic) && detail.status === "IN_PROGRESS" && (
                         <form
+                          className="work-item-action"
                           onSubmit={(e) => {
                             e.preventDefault();
                             const target = itemTargets[i.id] as WorkOrderItemStatus | undefined;
@@ -571,9 +790,12 @@ export function WorkOrders({
                             );
                           }}
                         >
-                          <fieldset disabled={disabled}>
+                          <fieldset
+                            className="work-item-action-fields"
+                            disabled={disabled}
+                          >
                             <label>
-                              상태 변경
+                              다음 처리
                               <select
                                 value={itemTargets[i.id] ?? ""}
                                 onChange={(e) =>
@@ -583,7 +805,9 @@ export function WorkOrders({
                                   }))
                                 }
                               >
-                                <option value="">현재: {workItemLabel[i.status]}</option>
+                                <option value="">
+                                  처리 선택
+                                </option>
                                 {workItemTransitions[i.status].map((status) => (
                                   <option key={status} value={status}>
                                     {workItemLabel[status]}
@@ -592,7 +816,7 @@ export function WorkOrders({
                               </select>
                             </label>
                             {itemTargets[i.id] === "SKIPPED" && (
-                              <label>
+                              <label className="work-skip-reason">
                                 건너뜀 사유
                                 <input
                                   value={itemReasons[i.id] ?? ""}
@@ -606,8 +830,11 @@ export function WorkOrders({
                                 />
                               </label>
                             )}
-                            <button className="button secondary" disabled={!itemTargets[i.id]}>
-                              상태 변경
+                            <button
+                              className="button secondary work-apply-button"
+                              disabled={!itemTargets[i.id]}
+                            >
+                              적용
                             </button>
                           </fieldset>
                         </form>
@@ -616,7 +843,7 @@ export function WorkOrders({
                   ))}
                 </ul>
                 {mechanic && detail.status !== "COMPLETED" && detail.status !== "CANCELLED" && (
-                  <section>
+                  <section className="mechanic-shortage-section">
                     <h3>부품 부족 신고</h3>
                     <p>재고가 부족해 작업을 진행할 수 없을 때 관리자에게 신고합니다.</p>
                     <form
@@ -702,6 +929,7 @@ export function WorkOrders({
                       </fieldset>
                     </form>}
                     <form
+                      className="work-order-progress-form"
                       onSubmit={(e) => {
                         const f = fields(e);
                         const status = f.get("status");
@@ -719,9 +947,12 @@ export function WorkOrders({
                         );
                       }}
                     >
-                      <fieldset disabled={disabled}>
+                      <fieldset
+                        className="work-order-progress-fields"
+                        disabled={disabled}
+                      >
                         <label>
-                          변경할 상태
+                          작업 단계
                           <select name="status" key={detail.status}>
                             {workTransitions[detail.status].map((s) => (
                               <option key={s} value={s}>
@@ -731,10 +962,15 @@ export function WorkOrders({
                           </select>
                         </label>
                         <label>
-                          변경 사유 (취소 시 필수)
+                          사유
+                          <span className="field-help">
+                            취소 처리 시 필수
+                          </span>
                           <input name="reason" maxLength={900} />
                         </label>
-                        <button className="button primary">상태 변경</button>
+                        <button className="button primary work-apply-button">
+                          적용
+                        </button>
                       </fieldset>
                     </form>
                   </>
@@ -768,6 +1004,7 @@ export function WorkOrders({
                 )}
                 {(admin || mechanic) && detail.status === "IN_PROGRESS" && (
                   <form
+                    className={mechanic ? "mechanic-parts-use" : undefined}
                     key={`${detail.id}-${revision}-use`}
                     onSubmit={(e) => {
                       const f = fields(e);
