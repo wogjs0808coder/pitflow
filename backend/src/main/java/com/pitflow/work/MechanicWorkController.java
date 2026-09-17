@@ -68,4 +68,14 @@ public class MechanicWorkController {
     var identity = identities.requireActive(principal.getName());
     return work.mechanicGiveBack(identity.userId(), identity.mechanicId(), key, id, request);
   }
+
+  @PostMapping("/{id}/shortages")
+  public Object shortage(
+      Principal principal,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id,
+      @Valid @RequestBody Shortage request) {
+    var identity = identities.requireActive(principal.getName());
+    return work.shortage(identity.userId(), identity.mechanicId(), key, id, request);
+  }
 }

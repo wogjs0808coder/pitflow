@@ -53,6 +53,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       { href: "/admin/work-orders", label: "정비 작업 관리", icon: Wrench },
       { href: "/admin/parts", label: "부품 관리", icon: Settings2 },
       { href: "/admin/mechanics", label: "정비사·계정 관리", icon: Settings2 },
+      { href: "/admin/shortages", label: "부품 부족 신고", icon: Settings2 },
       {
         href: "/admin/services",
         label: "정비 항목 관리",

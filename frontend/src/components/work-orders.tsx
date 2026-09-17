@@ -546,6 +546,53 @@ export function WorkOrders({
                     </li>
                   ))}
                 </ul>
+                {mechanic && detail.status !== "COMPLETED" && detail.status !== "CANCELLED" && (
+                  <section>
+                    <h3>부품 부족 신고</h3>
+                    <p>재고가 부족해 작업을 진행할 수 없을 때 관리자에게 신고합니다.</p>
+                    <form
+                      onSubmit={(e) => {
+                        const f = fields(e);
+                        void command.run(`${base}/${detail.id}/shortages`, {
+                          workOrderItemId: f.get("workOrderItemId"),
+                          partId: f.get("partId"),
+                          requestedQuantity: f.get("requestedQuantity"),
+                          reason: f.get("shortageReason") || null,
+                        });
+                      }}
+                    >
+                      <fieldset disabled={disabled}>
+                        <label>
+                          정비 항목
+                          <select name="workOrderItemId" required defaultValue="">
+                            <option value="" disabled>항목 선택</option>
+                            {detail.items.map((item) => (
+                              <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          부족 부품
+                          <select name="partId" required defaultValue="">
+                            <option value="" disabled>부품 선택</option>
+                            {parts.filter((part) => part.active !== false).map((part) => (
+                              <option key={part.id} value={part.id}>{part.name} · {part.sku} · {part.unit}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          필요한 수량
+                          <input name="requestedQuantity" type="number" min="0.001" max="99999999999.999" step="0.001" required />
+                        </label>
+                        <label>
+                          신고 사유 (선택)
+                          <input name="shortageReason" maxLength={500} />
+                        </label>
+                        <button className="button secondary">부품 부족 신고</button>
+                      </fieldset>
+                    </form>
+                  </section>
+                )}
                 {(admin || mechanic) && workTransitions[detail.status].length > 0 && (
                   <>
                     {admin && <form
