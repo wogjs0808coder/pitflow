@@ -2107,4 +2107,59 @@ class PhaseThreeIntegrationTest {
     assertThat(db.queryForObject("SELECT mileage FROM vehicles WHERE id=?", Integer.class, car))
         .isEqualTo(27000);
   }
+
+  @Test
+  void itemStatusTransitionsKeepLegacyDoneCompatibleAndRequireExclusivePayload() throws Exception {
+    UUID w = running();
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, w);
+
+    assertThat(
+            request("PATCH", "/api/admin/work-orders/" + w + "/items/" + item,
+                    Map.of("status", "COMPLETED", "done", true), UUID.randomUUID(), admin, true)
+                .getResponse().getStatus())
+        .isEqualTo(400);
+    assertThat(
+            request("PATCH", "/api/admin/work-orders/" + w + "/items/" + item,
+                    Map.of(), UUID.randomUUID(), admin, true)
+                .getResponse().getStatus())
+        .isEqualTo(400);
+
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item, Map.of("done", true));
+    assertThat(db.queryForObject("SELECT status FROM work_order_items WHERE id=?", String.class, item))
+        .isEqualTo("COMPLETED");
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item, Map.of("done", false));
+    assertThat(db.queryForObject("SELECT status FROM work_order_items WHERE id=?", String.class, item))
+        .isEqualTo("IN_PROGRESS");
+    int events = db.queryForObject("SELECT COUNT(*) FROM work_order_events WHERE work_order_id=?", Integer.class, w);
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item, Map.of("done", false));
+    assertThat(db.queryForObject("SELECT COUNT(*) FROM work_order_events WHERE work_order_id=?", Integer.class, w))
+        .isEqualTo(events);
+  }
+
+  @Test
+  void waitingPartsAndSkippedItemsBlockOrPermitWorkCompletionAsDefined() throws Exception {
+    UUID w = running();
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, w);
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item, Map.of("status", "WAITING_PARTS"));
+    assertThat(
+            request("PATCH", "/api/admin/work-orders/" + w + "/status",
+                    Map.of("status", "COMPLETED"), UUID.randomUUID(), admin, true)
+                .getResponse().getStatus())
+        .isEqualTo(409);
+    assertThat(
+            request("PATCH", "/api/admin/work-orders/" + w + "/items/" + item,
+                    Map.of("status", "SKIPPED"), UUID.randomUUID(), admin, true)
+                .getResponse().getStatus())
+        .isEqualTo(400);
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item,
+        Map.of("status", "SKIPPED", "reason", "고객 승인 대기"));
+    assertThat(db.queryForObject("SELECT done FROM work_order_items WHERE id=?", Boolean.class, item))
+        .isFalse();
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item, Map.of("status", "IN_PROGRESS"));
+    assertThat(db.queryForObject("SELECT skip_reason FROM work_order_items WHERE id=?", String.class, item))
+        .isNull();
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item,
+        Map.of("status", "SKIPPED", "reason", "고객 미승인"));
+    ok("PATCH", "/api/admin/work-orders/" + w + "/status", Map.of("status", "COMPLETED"));
+  }
 }

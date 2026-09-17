@@ -16,6 +16,14 @@ public final class WorkRequests {
     CANCELLED
   }
 
+  public enum ItemStatus {
+    PENDING,
+    IN_PROGRESS,
+    COMPLETED,
+    WAITING_PARTS,
+    SKIPPED
+  }
+
   public enum Unit {
     EA,
     L,
@@ -47,7 +55,7 @@ public final class WorkRequests {
 
   public record Assignment(UUID mechanicId) {}
 
-  public record ItemState(@NotNull Boolean done) {}
+  public record ItemState(ItemStatus status, Boolean done, @Size(max = 900) String reason) {}
 
   public record Line(
       @NotNull UUID partId,

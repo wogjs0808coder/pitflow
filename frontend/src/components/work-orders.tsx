@@ -11,6 +11,9 @@ import {
   WorkDetail,
   workLabel,
   workTransitions,
+  workItemLabel,
+  workItemTransitions,
+  WorkOrderItemStatus,
   localTime,
   remaining,
 } from "@/lib/work";
@@ -45,6 +48,8 @@ export function WorkOrders({
   const [bookingError, setBookingError] = useState("");
   const [bookingLoading, setBookingLoading] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [itemTargets, setItemTargets] = useState<Record<string, string>>({});
+  const [itemReasons, setItemReasons] = useState<Record<string, string>>({});
   const base = admin
     ? "/api/admin/work-orders"
     : mechanic
@@ -114,7 +119,11 @@ export function WorkOrders({
     const c = new AbortController();
     api<WorkDetail>(`${base}/${selected}`, { signal: c.signal })
       .then((d) => {
-        if (!c.signal.aborted) setDetail(d);
+        if (!c.signal.aborted) {
+          setDetail(d);
+          setItemTargets({});
+          setItemReasons({});
+        }
       })
       .catch((e) => {
         if (!c.signal.aborted) setError(errorText(e));
@@ -505,10 +514,23 @@ export function WorkOrders({
                     </div>
                   )
                 )}
-                <p className="muted">
-                  정비 항목 {detail.items.filter((i) => i.done).length} /{" "}
-                  {detail.items.length} 완료
-                </p>
+                {(() => {
+                  const completed = detail.items.filter(
+                    (i) => i.status === "COMPLETED",
+                  ).length;
+                  const skipped = detail.items.filter(
+                    (i) => i.status === "SKIPPED",
+                  ).length;
+                  const waitingParts = detail.items.filter(
+                    (i) => i.status === "WAITING_PARTS",
+                  ).length;
+                  const active = detail.items.length - completed - skipped - waitingParts;
+                  return (
+                    <p className="muted">
+                      정비 항목 · 완료 {completed} · 건너뜀 {skipped} · 부품 대기 {waitingParts} · 진행/대기 {active}
+                    </p>
+                  );
+                })()}
                 <h3>정비 항목</h3>
                 <ul className="work-items">
                   {detail.items.map((i) => (
@@ -522,26 +544,73 @@ export function WorkOrders({
                           ? ` · 공임 합계 ${won(i.labor_price * i.quantity)}`
                           : ""}
                       </span>
-                      {admin || mechanic ? (
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={i.done}
-                            disabled={
-                              disabled || detail.status !== "IN_PROGRESS"
+                      <span>
+                        {workItemLabel[i.status]}
+                        {i.status === "SKIPPED" && i.skip_reason
+                          ? ` · ${i.skip_reason}`
+                          : ""}
+                      </span>
+                      {(admin || mechanic) && detail.status === "IN_PROGRESS" && (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const target = itemTargets[i.id] as WorkOrderItemStatus | undefined;
+                            if (!target) return;
+                            const reason = itemReasons[i.id] ?? "";
+                            if (target === "SKIPPED" && !reason.trim()) {
+                              setFormError("건너뛴 사유를 입력해 주세요.");
+                              return;
                             }
-                            onChange={(e) =>
-                              void command.run(
-                                `${base}/${detail.id}/items/${i.id}`,
-                                { done: e.target.checked },
-                                "PATCH",
-                              )
-                            }
-                          />
-                          완료
-                        </label>
-                      ) : (
-                        <span>{i.done ? "완료" : "미완료"}</span>
+                            setFormError("");
+                            void command.run(
+                              `${base}/${detail.id}/items/${i.id}`,
+                              target === "SKIPPED"
+                                ? { status: target, reason: reason.trim() }
+                                : { status: target },
+                              "PATCH",
+                            );
+                          }}
+                        >
+                          <fieldset disabled={disabled}>
+                            <label>
+                              상태 변경
+                              <select
+                                value={itemTargets[i.id] ?? ""}
+                                onChange={(e) =>
+                                  setItemTargets((current) => ({
+                                    ...current,
+                                    [i.id]: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">현재: {workItemLabel[i.status]}</option>
+                                {workItemTransitions[i.status].map((status) => (
+                                  <option key={status} value={status}>
+                                    {workItemLabel[status]}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            {itemTargets[i.id] === "SKIPPED" && (
+                              <label>
+                                건너뜀 사유
+                                <input
+                                  value={itemReasons[i.id] ?? ""}
+                                  maxLength={900}
+                                  onChange={(e) =>
+                                    setItemReasons((current) => ({
+                                      ...current,
+                                      [i.id]: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                            )}
+                            <button className="button secondary" disabled={!itemTargets[i.id]}>
+                              상태 변경
+                            </button>
+                          </fieldset>
+                        </form>
                       )}
                     </li>
                   ))}

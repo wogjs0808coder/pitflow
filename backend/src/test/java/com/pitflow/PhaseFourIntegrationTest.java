@@ -468,4 +468,15 @@ class PhaseFourIntegrationTest {
         .containsExactly(200, 200);
     assertThat(count("payment_records")).isEqualTo(2);
   }
+
+  @Test
+  void skippedLaborIsExcludedFromBillingLines() throws Exception {
+    UUID w = running();
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, w);
+    ok("PATCH", "/api/admin/work-orders/" + w + "/items/" + item,
+        Map.of("status", "SKIPPED", "reason", "고객 미승인"));
+    ok("PATCH", "/api/admin/work-orders/" + w + "/status", Map.of("status", "COMPLETED"));
+    var preview = read("/api/admin/billing/work-orders/" + w + "/preview", admin);
+    assertThat(preview.get("items")).isEmpty();
+  }
 }

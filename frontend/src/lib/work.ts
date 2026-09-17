@@ -21,6 +21,32 @@ export const workTransitions: Record<WorkStatus, WorkStatus[]> = {
   CANCELLED: [],
 };
 
+export type WorkOrderItemStatus =
+  | "PENDING"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "WAITING_PARTS"
+  | "SKIPPED";
+
+export const workItemLabel: Record<WorkOrderItemStatus, string> = {
+  PENDING: "대기",
+  IN_PROGRESS: "작업 중",
+  COMPLETED: "완료",
+  WAITING_PARTS: "부품 대기",
+  SKIPPED: "건너뜀",
+};
+
+export const workItemTransitions: Record<
+  WorkOrderItemStatus,
+  WorkOrderItemStatus[]
+> = {
+  PENDING: ["IN_PROGRESS", "COMPLETED", "WAITING_PARTS", "SKIPPED"],
+  IN_PROGRESS: ["PENDING", "COMPLETED", "WAITING_PARTS", "SKIPPED"],
+  WAITING_PARTS: ["IN_PROGRESS", "COMPLETED", "SKIPPED"],
+  COMPLETED: ["IN_PROGRESS"],
+  SKIPPED: ["IN_PROGRESS"],
+};
+
 export type Decimal = string | number;
 
 export type Mechanic = {
@@ -86,6 +112,8 @@ export type WorkDetail = Work & {
     name: string;
     labor_price: number;
     quantity: number;
+    status: WorkOrderItemStatus;
+    skip_reason: string | null;
     done: boolean;
   }[];
 
