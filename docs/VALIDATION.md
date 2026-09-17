@@ -75,3 +75,23 @@
 ## V4 PostgreSQL 호환 수정 (2026-09-13, 한국 시간)
 
 사용자 PostgreSQL 17.11에서 V4 제약조건 조회 실패·롤백이 확인되었습니다. NOT NULL을 CHECK 개수에 포함한 원인을 수정했습니다. H2 44개 테스트 재통과, PostgreSQL 17.5 기반 PGlite에서 기존 오류 재현 및 수정 SQL·NOT NULL 보존을 검증했습니다. 네이티브 PostgreSQL 전체 회귀 검증용 compose.test.yaml과 복구 절차는 [V4-HOTFIX.md](V4-HOTFIX.md)에 추가했습니다.
+## Phase 3E 검증 기록 (2026-09-18, 한국 시간)
+
+- 구현 브랜치: `feat/phase3e-admin-workspace`.
+- PR #18 `feat: Phase 3E 관리자·정비사·고객 UX 개선` merge 완료.
+- `main` 기준 merge 결과 commit: `abc80ad`.
+- Phase 3E 애플리케이션 변경은 Frontend 5개 파일로 제한했다.
+- Backend Java source 변경 없음.
+- Flyway migration 및 DB schema 변경 없음.
+- 기존 API, 인증, 권한, CSRF, idempotency, WorkOrder / WorkOrderItem 상태 전이 의미를 변경하지 않았다.
+- `npm run typecheck` 통과.
+- `npm run build` 통과.
+- Next.js production build에서 20/20 route 생성 확인.
+- `git diff --check` 통과.
+- CUSTOMER 예약 목록과 navigation 브라우저 확인 통과.
+- MECHANIC 작업 목록·상세·항목 처리·부품 부족 신고·부품 작업 UI 브라우저 확인 통과.
+- ADMIN workflow navigation·작업 현황·작업 상세·항목 처리 UI 브라우저 확인 통과.
+- 작업 처리 성공/실패 feedback을 스크롤 위치와 관계없이 확인할 수 있도록 fixed notification UI로 변경했고 브라우저에서 동작을 확인했다.
+- PC 화면은 역할별 정보 구조와 작업 흐름을 중심으로 UX를 개선했다.
+- 모바일 환경은 고밀도 관리자·정비사 화면의 배치와 사용성이 충분하지 않아 추가 반응형 개선이 필요하다. 이 항목은 Phase 6 Hardening / Production Readiness 범위로 이관한다.
+- Phase 3E에서는 Backend 회귀 테스트를 새로 요구하는 기능 변경이 없었으며, 기존 Phase 3D Backend / DB 검증 기준을 유지한다.

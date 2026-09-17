@@ -5,16 +5,18 @@
 - Phase 1 — Catalog / Estimate / Snapshot: 완료
 - Phase 2 — Mechanic Workflow: 완료
 - Phase 2 Hotfix — mechanic suggested parts: 완료
+- Phase 3 — Admin Operations & Notifications: 완료
+- 현재 다음 구현: Phase 4 — Finance & Cost
 
 이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
 `docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
 
-## Phase 3 — Admin Operations & Notifications
+## Phase 3 — Admin Operations & Notifications 완료
 
 목표:
 관리자와 정비사 사이의 운영 흐름을 개선하고, 일부 부품 부족 때문에 전체 작업이 중단되는 구조를 개선한다.
 
-### Phase 3A — Notification Foundation
+### Phase 3A — Notification Foundation 완료
 
 - DB 기반 알림
 - 알림 목록
@@ -30,13 +32,13 @@
 
 SMS, 이메일, 카카오톡, WebSocket은 아직 하지 않는다.
 
-### Phase 3B — Assignment / Completion
+### Phase 3B — Assignment / Completion 완료
 
 - 관리자가 정비사를 배정하면 정비사에게 알림
 - 재배정 시 새 정비사에게 알림
 - 정비사가 작업을 완료하면 관리자에게 알림
 
-### Phase 3C — Part Shortage
+### Phase 3C — Part Shortage 완료
 
 - 정비사의 명시적 재고 부족 보고
 - 단순 409 오류는 알림으로 만들지 않음
@@ -59,17 +61,22 @@ WorkOrderItem 상태 도입:
 
 SKIPPED에는 사유가 필요하도록 구현했다.
 
-### Phase 3E — Admin Workspace 다음 구현
+### Phase 3E — Admin Workspace / UX Integration 완료
 
-관리자 화면에서 다음 상태를 쉽게 확인한다.
+기존 Backend / API / DB 동작을 유지하면서 역할별 프론트엔드 작업 환경을 정리했다.
 
-- 오늘 예약
-- 입고 대기
-- 작업 중
-- 부품 대기
-- 정비 완료
-- 정산 대기
-- 출고 대기
+- CUSTOMER / MECHANIC / ADMIN navigation 분리
+- 관리자 업무 흐름 중심의 workflow navigation
+- 관리자 작업 현황 요약 및 작업 상세 정보 가독성 개선
+- 관리자 작업 상태: 입고 대기 / 작업 중 / 부품 대기 / 출고 대기 / 출고 완료 / 전체 작업
+- 정비사 작업 중심 WorkOrder workspace
+- 정비 항목 `다음 처리 → 적용` UI
+- 작업 결과 fixed feedback notification
+- 고객 예약 목록 UX 및 navigation 정리
+- Backend / API / DB / Flyway migration 변경 없음
+
+PC 운영 환경을 우선해 구현했다.
+모바일 고밀도 운영 화면의 반응형 UX 개선은 Phase 6 Hardening 범위에 포함한다.
 
 ---
 
@@ -130,14 +137,8 @@ SKIPPED에는 사유가 필요하도록 구현했다.
 
 ---
 
-## 앞으로의 구현 순서
+## 현재 이후 구현 순서
 
-Documentation Cleanup
-→ Phase 3A
-→ Phase 3B
-→ Phase 3C
-→ Phase 3D
-→ Phase 3E
-→ Phase 4
+Phase 4
 → Phase 5
 → Phase 6

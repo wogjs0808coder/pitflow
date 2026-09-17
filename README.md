@@ -4,7 +4,7 @@
 
 Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 있으며, 실제 정비소 업무 흐름을 기준으로 단계적으로 기능을 확장하고 있습니다.
 
-현재 Phase 3C까지 구현 및 검증이 완료되었습니다.
+현재 Phase 3 — Admin Operations & Notifications까지 구현 및 주요 회귀 검증이 완료되었습니다. 다음 구현 단계는 Phase 4 — Finance & Cost입니다.
 
 현재 구현 단계:
 
@@ -15,6 +15,8 @@ Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 �
 - Phase 3B — Assignment / Completion 완료
 - Phase 3C — Part Shortage 완료
 - Phase 3D — Item-level Workflow 완료
+- Phase 3E — Admin Workspace / UX Integration 완료
+- Phase 3 — Admin Operations & Notifications 완료
 
 자세한 개발 순서는 `docs/ROADMAP.md`를 기준으로 합니다.
 
@@ -146,6 +148,21 @@ DB 기반 알림 기능을 제공합니다.
 현재 알림은 HTTP polling 기반입니다.
 
 WebSocket, SMS, 이메일, 카카오톡 알림은 현재 범위에 포함하지 않습니다.
+
+### 역할별 Workspace UX
+
+Phase 3E에서는 기존 업무 로직을 유지하면서 역할별 프론트엔드 작업 환경을 정리했습니다.
+
+- CUSTOMER / MECHANIC / ADMIN 역할별 navigation 분리
+- 관리자 업무 흐름 중심의 상단 workflow navigation
+- 관리자 작업 현황 및 작업 상세 정보 가독성 개선
+- 정비사 작업 중심 WorkOrder 화면 구성
+- 정비 항목 처리 UI를 `다음 처리 → 적용` 방식으로 단순화
+- 작업 처리 결과를 현재 화면에서 확인할 수 있는 고정 알림 UI
+- 고객 예약 목록 및 예약 navigation 정리
+- Backend / API / DB / Flyway migration 변경 없음
+
+PC 운영 화면을 우선해 Phase 3E를 구성했습니다. 모바일에서 핵심 화면은 사용할 수 있지만 고밀도 관리자·정비사 화면의 반응형 UX는 Phase 6 Hardening 범위에서 추가 개선합니다.
 
 ### 정산 및 수납
 
@@ -390,7 +407,19 @@ DB volume은 유지됩니다.
 
 ## 현재 검증 상태
 
-Phase 3D 완료 시점 기준:
+Phase 3E 완료 시점 기준:
+
+- Frontend `npm run typecheck` PASS
+- Frontend production build PASS
+- Next.js 20/20 route 생성 확인
+- CUSTOMER / MECHANIC / ADMIN PC 브라우저 회귀 확인 PASS
+- `git diff --check` PASS
+- Phase 3E Backend 변경 없음
+- Phase 3E DB / Flyway migration 변경 없음
+- PR #18 merge 완료, `main` 기준 Phase 3E commit `abc80ad`
+- 모바일 고밀도 운영 화면의 반응형 UX는 Phase 6 개선 항목으로 유지
+
+Phase 3D까지의 Backend / DB 검증 기준:
 
 | 검사 | 결과 |
 | --- | --- |
@@ -463,15 +492,15 @@ Phase 3D에서 V16 migration으로 WorkOrderItem 상태와 건너뜀 사유를 �
 - Phase 3B — Assignment / Completion
 - Phase 3C — Part Shortage
 - Phase 3D — Item-level Workflow
+- Phase 3E — Admin Workspace / UX Integration
+- Phase 3 — Admin Operations & Notifications
 
 ### 다음
 
-Phase 3E — Admin Workspace
+Phase 4 — Finance & Cost
 
 ### 이후
 
-- Phase 3E — Admin Workspace
-- Phase 4 — Finance & Cost
 - Phase 5 — Payments
 - Phase 6 — Hardening / E2E / Production Readiness
 
