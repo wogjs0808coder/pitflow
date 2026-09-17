@@ -168,4 +168,15 @@ public class WorkController {
       @Valid @RequestBody Return r) {
     return s.giveBack(p.getName(), key, id, r);
   }
+
+  @GetMapping("/part-shortages")
+  public Object shortages(@RequestParam(defaultValue = "true") boolean openOnly) {
+    return s.shortages(openOnly);
+  }
+
+  @PatchMapping("/part-shortages/{id}/resolve")
+  public Object resolveShortage(
+      Principal p, @RequestHeader("Idempotency-Key") UUID key, @PathVariable UUID id) {
+    return s.resolveShortage(p.getName(), key, id);
+  }
 }

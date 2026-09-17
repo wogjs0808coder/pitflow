@@ -80,6 +80,21 @@ public class NotificationService {
                         "정비사가 담당 작업을 완료했습니다.",
                         workOrderId)));
   }
+
+  @Transactional
+  public void notifyPartShortage(UUID workOrderId) {
+    users.findAllByRole(AppUser.Role.ADMIN)
+        .forEach(
+            admin ->
+                notifications.save(
+                    new Notification(
+                        admin.getId(),
+                        Notification.Type.PART_SHORTAGE,
+                        "부품 부족 신고가 접수되었습니다.",
+                        "정비사가 작업에 필요한 부품 부족을 신고했습니다.",
+                        workOrderId)));
+  }
+
   private UUID requireUserId(String email) {
     return users
         .findByEmail(email)

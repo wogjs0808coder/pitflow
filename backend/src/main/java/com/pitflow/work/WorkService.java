@@ -470,6 +470,102 @@ public class WorkService {
     return detail;
   }
 
+  public Map<String, Object> shortage(
+      UUID actor, UUID mechanic, UUID key, UUID work, Shortage r) {
+    BigDecimal requested = quantity(r.requestedQuantity());
+    String reason = r.reason() == null ? "" : r.reason().strip();
+    return command(
+        actor,
+        key,
+        "shortage/" + work + "/" + r.workOrderItemId() + "/" + r.partId(),
+        new Shortage(r.workOrderItemId(), r.partId(), requested, reason),
+        () -> {
+          var w = lockMechanicWork(work, actor, mechanic);
+          editable(w);
+          var item =
+              one(
+                  "SELECT * FROM work_order_items WHERE id=? AND work_order_id=?",
+                  r.workOrderItemId(),
+                  work);
+          var part = lockPart(r.partId());
+          if (!active(part) || Boolean.TRUE.equals(part.get("archived")))
+            throw conflict("활성 부품을 선택해 주세요.");
+          if (!db.queryForList(
+                  "SELECT id FROM part_shortage_reports WHERE work_order_id=? AND work_order_item_id=? AND part_id=? AND status='OPEN'",
+                  work,
+                  r.workOrderItemId(),
+                  r.partId())
+              .isEmpty()) throw conflict("이미 접수된 부품 부족 신고가 있습니다.");
+          UUID id = UUID.randomUUID();
+          db.update(
+              "INSERT INTO part_shortage_reports"
+                  + " (id,work_order_id,work_order_item_id,part_id,reporter_user_id,requested_quantity,available_quantity_snapshot,reason,status,open_guard,created_at)"
+                  + " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+              id,
+              work,
+              item.get("id"),
+              part.get("id"),
+              actor,
+              requested,
+              part.get("quantity"),
+              reason,
+              "OPEN",
+              "Y",
+              now());
+          notificationService.notifyPartShortage(work);
+          var response = shortage(id);
+          response.remove("available_quantity_snapshot");
+          response.remove("reporter_user_id");
+          response.remove("resolved_by_user_id");
+          response.remove("open_guard");
+          return response;
+        },
+        () -> lockMechanicWork(work, actor, mechanic));
+  }
+
+  public List<Map<String, Object>> shortages(boolean openOnly) {
+    return rows(
+        "SELECT r.*,w.vehicle_label,w.plate_number,w.mechanic_name,i.name AS item_name,p.sku,p.name AS part_name,"
+            + " reporter.name AS reporter_name,resolver.name AS resolver_name"
+            + " FROM part_shortage_reports r JOIN work_orders w ON w.id=r.work_order_id"
+            + " JOIN work_order_items i ON i.id=r.work_order_item_id JOIN parts p ON p.id=r.part_id"
+            + " JOIN users reporter ON reporter.id=r.reporter_user_id"
+            + " LEFT JOIN users resolver ON resolver.id=r.resolved_by_user_id"
+            + (openOnly ? " WHERE r.status='OPEN'" : "")
+            + " ORDER BY CASE WHEN r.status='OPEN' THEN 0 ELSE 1 END,r.created_at DESC,r.id");
+  }
+
+  public Map<String, Object> resolveShortage(String email, UUID key, UUID reportId) {
+    return command(
+        email,
+        key,
+        "shortage-resolve/" + reportId,
+        Map.of("reportId", reportId),
+        () -> {
+          UUID resolver = actor(email, true);
+          var report = one("SELECT * FROM part_shortage_reports WHERE id=? FOR UPDATE", reportId);
+          if ("RESOLVED".equals(report.get("status"))) return shortage(reportId);
+          db.update(
+              "UPDATE part_shortage_reports SET status='RESOLVED',open_guard=NULL,resolved_at=?,resolved_by_user_id=? WHERE id=?",
+              now(),
+              resolver,
+              reportId);
+          return shortage(reportId);
+        });
+  }
+
+  private Map<String, Object> shortage(UUID reportId) {
+    return clean(
+        one(
+            "SELECT r.*,w.vehicle_label,w.plate_number,w.mechanic_name,i.name AS item_name,p.sku,p.name AS part_name,"
+                + " reporter.name AS reporter_name,resolver.name AS resolver_name"
+                + " FROM part_shortage_reports r JOIN work_orders w ON w.id=r.work_order_id"
+                + " JOIN work_order_items i ON i.id=r.work_order_item_id JOIN parts p ON p.id=r.part_id"
+                + " JOIN users reporter ON reporter.id=r.reporter_user_id"
+                + " LEFT JOIN users resolver ON resolver.id=r.resolved_by_user_id WHERE r.id=?",
+            reportId));
+  }
+
   private Map<String, Object> detail(Map<String, Object> result, UUID work, boolean admin) {
     result.put(
         "items",

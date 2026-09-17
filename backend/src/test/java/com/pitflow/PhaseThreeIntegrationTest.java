@@ -76,6 +76,7 @@ class PhaseThreeIntegrationTest {
   @AfterEach
   void clean() {
     db.update("DELETE FROM notifications");
+    db.update("DELETE FROM part_shortage_reports");
     // Disposable test DB only: production has no delete endpoints for these records.
     db.update("DELETE FROM stock_movements WHERE kind='RETURN'");
     db.update("DELETE FROM stock_movements");
@@ -1995,6 +1996,102 @@ class PhaseThreeIntegrationTest {
 
     assertThat(balance(p)).isEqualByComparingTo("2");
     }
+
+  @Test
+  void mechanicShortageReportsAreOwnedNotifiedResolvedAndReopenable() throws Exception {
+    var actor = assignedMechanic("phase3c-mechanic@example.com");
+    UUID own = work(appointment);
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, own);
+    UUID part = part("P3C-SHORT", "0");
+    BigDecimal beforeQuantity = balance(part);
+    int beforeMovements = count("stock_movements");
+
+    var created =
+        mechanicOk(
+            "POST",
+            "/api/mechanic/work-orders/" + own + "/shortages",
+            Map.of("workOrderItemId", item, "partId", part, "requestedQuantity", "2.000", "reason", "재고 부족"),
+            UUID.randomUUID(),
+            actor.email());
+    UUID report = UUID.fromString(created.get("id").asText());
+    assertThat(created.get("status").asText()).isEqualTo("OPEN");
+    assertThat(created.get("available_quantity_snapshot")).isNull();
+    assertThat(
+            db.queryForObject(
+                "SELECT available_quantity_snapshot FROM part_shortage_reports WHERE id=?",
+                BigDecimal.class,
+                report))
+        .isEqualByComparingTo("0");
+    assertThat(balance(part)).isEqualByComparingTo(beforeQuantity);
+    assertThat(count("stock_movements")).isEqualTo(beforeMovements);
+    assertThat(notificationCount(users.findByEmail(admin).orElseThrow().getId(), "PART_SHORTAGE", own))
+        .isEqualTo(1);
+    assertThat(notificationCount(users.findByEmail("work-other-admin@example.com").orElseThrow().getId(), "PART_SHORTAGE", own))
+        .isEqualTo(1);
+
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + own + "/shortages",
+                    Map.of("workOrderItemId", item, "partId", part, "requestedQuantity", "2"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + own + "/shortages",
+                    Map.of("workOrderItemId", item, "partId", part, "requestedQuantity", "0"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(400);
+
+    UUID otherWork = work(appointment());
+    db.update("UPDATE work_orders SET mechanic_id=NULL,mechanic_name=NULL WHERE id=?", otherWork);
+    UUID otherItem = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, otherWork);
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + otherWork + "/shortages",
+                    Map.of("workOrderItemId", otherItem, "partId", part, "requestedQuantity", "1"),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+
+    mvc.perform(get("/api/admin/part-shortages").with(user(admin).roles("ADMIN")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].id").value(report.toString()))
+        .andExpect(jsonPath("$[0].part_name").value("P3C-SHORT"));
+    mvc.perform(get("/api/admin/part-shortages").with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isForbidden());
+    mvc.perform(get("/api/admin/part-shortages").with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isForbidden());
+
+    var resolved =
+        ok("PATCH", "/api/admin/part-shortages/" + report + "/resolve", Map.of());
+    assertThat(resolved.get("status").asText()).isEqualTo("RESOLVED");
+    assertThat(resolved.get("resolved_at").isTextual()).isTrue();
+    assertThat(resolved.get("resolved_by_user_id").asText())
+        .isEqualTo(users.findByEmail(admin).orElseThrow().getId().toString());
+    assertThat(balance(part)).isEqualByComparingTo(beforeQuantity);
+    assertThat(count("stock_movements")).isEqualTo(beforeMovements);
+
+    var reopened =
+        mechanicOk(
+            "POST",
+            "/api/mechanic/work-orders/" + own + "/shortages",
+            Map.of("workOrderItemId", item, "partId", part, "requestedQuantity", "1"),
+            UUID.randomUUID(),
+            actor.email());
+    assertThat(reopened.get("id").asText()).isNotEqualTo(report.toString());
+    assertThat(db.queryForObject("SELECT COUNT(*) FROM part_shortage_reports", Integer.class)).isEqualTo(2);
+  }
 
   @Test
   void recordedMileageCannotBeOverwrittenByCustomerUpdate() throws Exception {
