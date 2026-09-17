@@ -14,7 +14,7 @@ Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 �
 - Phase 3A — Notification Foundation 완료
 - Phase 3B — Assignment / Completion 완료
 - Phase 3C — Part Shortage 완료
-- Phase 3D — Item-level Workflow 다음 구현 예정
+- Phase 3D — Item-level Workflow 완료
 
 자세한 개발 순서는 `docs/ROADMAP.md`를 기준으로 합니다.
 
@@ -63,7 +63,7 @@ Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 �
 - COMPLETED
 - CANCELLED
 
-Phase 3D에서는 WorkOrderItem 단위 상태 관리를 추가할 예정입니다.
+Phase 3D에서는 WorkOrderItem 단위 상태 관리를 추가했습니다. 각 항목은 PENDING, IN_PROGRESS, WAITING_PARTS, COMPLETED, SKIPPED 상태를 독립적으로 가지며, 전체 WorkOrder 상태와 분리해 관리합니다.
 
 ### 정비사
 
@@ -390,11 +390,11 @@ DB volume은 유지됩니다.
 
 ## 현재 검증 상태
 
-Phase 3C 완료 시점 기준:
+Phase 3D 완료 시점 기준:
 
 | 검사 | 결과 |
 | --- | --- |
-| PostgreSQL 17 Flyway V1 → V15 | PASS |
+| PostgreSQL 17 Flyway V1 → V16 | PASS |
 | Backend 전체 테스트 | PASS |
 | Frontend production build | PASS |
 | TypeScript typecheck | PASS |
@@ -403,28 +403,31 @@ Phase 3C 완료 시점 기준:
 | Local browser E2E | PASS |
 | Production Vercel / Render / Neon E2E | PASS |
 
-Phase 3C Production E2E에서 확인한 흐름:
+Phase 3D Production E2E에서 확인한 흐름:
 
-관리자 로그인
-→ 정비사 계정 준비
-→ 작업 배정
-→ 정비사 부품 부족 신고
-→ 관리자 알림
-→ OPEN 부족 신고 확인
-→ 중복 OPEN 차단
-→ 해결 처리
-→ 해결 이력 보존
-→ 동일 조합 재신고
+WorkOrder 작업 시작
+→ WorkOrderItem PENDING → IN_PROGRESS
+→ IN_PROGRESS → WAITING_PARTS
+→ 항목 부품 대기 중에도 WorkOrder IN_PROGRESS 유지
+→ 미완료 항목 존재 시 WorkOrder 완료 차단
+→ SKIPPED 사유 필수 검증
+→ WAITING_PARTS → SKIPPED
+→ COMPLETED / SKIPPED 항목만 남은 경우 WorkOrder 완료
+→ SKIPPED 공임 정산 제외
+→ 고객 화면 읽기 전용 확인
+→ 부품 부족 신고 후 항목 상태 유지
+→ 부족 신고 해결 후 항목 상태 유지
+→ 해결 처리자 / 처리 시각 보존
 
 ## 현재 DB migration
 
 현재 최신 migration:
 
-    V15__part_shortage_reports.sql
+    V16__work_order_item_status.sql
 
-Phase 3D에서 스키마 변경이 필요하면 V16 migration을 새로 추가합니다.
+Phase 3D에서 V16 migration으로 WorkOrderItem 상태와 건너뜀 사유를 추가했습니다.
 
-기존 V1~V15 migration은 수정하지 않습니다.
+기존 V1~V16 migration은 수정하지 않습니다.
 
 ## 프로젝트 구조
 
@@ -459,24 +462,11 @@ Phase 3D에서 스키마 변경이 필요하면 V16 migration을 새로 추가�
 - Phase 3A — Notification Foundation
 - Phase 3B — Assignment / Completion
 - Phase 3C — Part Shortage
+- Phase 3D — Item-level Workflow
 
 ### 다음
 
-Phase 3D — Item-level Workflow
-
-예정 범위:
-
-- WorkOrderItem 상태 관리
-- PENDING
-- IN_PROGRESS
-- COMPLETED
-- WAITING_PARTS
-- SKIPPED
-- 부분 작업 진행
-- 항목별 부품 대기
-- 다른 항목의 독립적인 작업 진행
-- WorkOrder 완료 조건 강화
-- SKIPPED 사유 기록
+Phase 3E — Admin Workspace
 
 ### 이후
 

@@ -43,7 +43,7 @@ SMS, 이메일, 카카오톡, WebSocket은 아직 하지 않는다.
 - 작업, 항목, 부품, 필요 수량, 현재 수량 기록
 - 관리자에서 부족 보고 확인
 
-### Phase 3D — Item-level Workflow
+### Phase 3D — Item-level Workflow 완료
 
 WorkOrderItem 상태 도입:
 
@@ -53,13 +53,13 @@ WorkOrderItem 상태 도입:
 - WAITING_PARTS
 - SKIPPED
 
-기존 done boolean 및 운영 데이터와 호환되는 migration을 사용한다.
+기존 done boolean 및 운영 데이터와 호환되는 V16 migration을 적용했다.
 
-전체 작업은 모든 항목이 COMPLETED 또는 SKIPPED일 때만 COMPLETED 가능하게 한다.
+전체 작업은 모든 항목이 COMPLETED 또는 SKIPPED일 때만 COMPLETED 가능하도록 구현했다.
 
-SKIPPED에는 사유가 필요하다.
+SKIPPED에는 사유가 필요하도록 구현했다.
 
-### Phase 3E — Admin Workspace
+### Phase 3E — Admin Workspace 다음 구현
 
 관리자 화면에서 다음 상태를 쉽게 확인한다.
 
