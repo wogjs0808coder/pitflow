@@ -179,7 +179,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     },
     {
       href: "/admin/shortages",
-      label: "부품 부족",
+      label: "부품 부족 신고",
     },
     {
       href: "/admin/billing",

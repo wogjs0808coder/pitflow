@@ -10,9 +10,9 @@ import {
   Work,
   WorkDetail,
   workLabel,
-  workTransitions,
   workItemLabel,
   workItemTransitions,
+  workItemActionLabel,
   WorkOrderItemStatus,
   localTime,
   remaining,
@@ -50,6 +50,7 @@ export function WorkOrders({
   const [revision, setRevision] = useState(0);
   const [itemTargets, setItemTargets] = useState<Record<string, string>>({});
   const [itemReasons, setItemReasons] = useState<Record<string, string>>({});
+  const [showCancelForm, setShowCancelForm] = useState(false);
   const base = admin
     ? "/api/admin/work-orders"
     : mechanic
@@ -123,6 +124,7 @@ export function WorkOrders({
           setDetail(d);
           setItemTargets({});
           setItemReasons({});
+          setShowCancelForm(false);
         }
       })
       .catch((e) => {
@@ -187,6 +189,14 @@ export function WorkOrders({
     (b) =>
       b.status === "VISITED" && !orders.some((w) => w.appointment_id === b.id),
   );
+  const listLabel = (w: Work) => {
+    if (w.released_at) return "출고 완료";
+    if (w.status === "RECEIVED") return "입고 완료 · 작업 시작 필요";
+    if (w.status === "IN_PROGRESS") return "작업 중";
+    if (w.status === "WAITING_PARTS") return "부품 대기 · 작업 재개 필요";
+    if (w.status === "COMPLETED") return "정비 완료 · 출고 대기";
+    return "취소됨";
+  };
   return (
     <>
       <div className="page-heading">
@@ -563,11 +573,7 @@ export function WorkOrders({
                 onClick={() => setSelected(w.id)}
               >
                 <span className={`work-stage stage-${category(w)}`}>
-                  {w.released_at
-                    ? "출고 완료"
-                    : w.status === "COMPLETED"
-                      ? "정비 완료 · 출고 대기"
-                      : workLabel[w.status]}
+                  {listLabel(w)}
                 </span>
                 {w.released_at && (
                   <span className="work-release-time">
@@ -619,6 +625,48 @@ export function WorkOrders({
                   {detail.mechanic_name ?? "미배정"}
                 </p>
                 <p className="booking-notes">{detail.notes}</p>
+
+                {detail.status !== "CANCELLED" ? (
+                  <div className="workflow-rail" aria-label="작업 진행 단계">
+                    {[
+                      ["RECEIVED", "입고 완료"],
+                      ["IN_PROGRESS", "작업 진행"],
+                      ["COMPLETED", "정비 완료"],
+                      ["RELEASED", "출고"],
+                    ].map(([step, label], index) => {
+                      const current = detail.released_at
+                        ? 3
+                        : detail.status === "RECEIVED"
+                          ? 0
+                          : detail.status === "COMPLETED"
+                            ? 2
+                            : 1;
+                      return (
+                        <div
+                          className={`workflow-rail-step ${
+                            index < current ? "complete" : ""
+                          } ${index === current ? "current" : ""} ${
+                            detail.status === "WAITING_PARTS" && index === 1
+                              ? "paused"
+                              : ""
+                          }`}
+                          key={step}
+                        >
+                          <span className="workflow-rail-dot" />
+                          <strong>{label}</strong>
+                          {detail.status === "WAITING_PARTS" && index === 1 && (
+                            <small>부품 대기</small>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="workflow-cancelled-banner">
+                    <strong>취소된 작업</strong>
+                    <span>정상 작업 흐름과 분리되어 있습니다.</span>
+                  </div>
+                )}
 
                 {admin && (
                   <div className="admin-work-facts">
@@ -680,6 +728,112 @@ export function WorkOrders({
                       <strong>{detail.items.length}건</strong>
                     </div>
                   </div>
+                )}
+
+                {detail.status === "RECEIVED" && (admin || mechanic) && (
+                  <section className="workflow-cta-panel">
+                    <div>
+                      <strong>입고가 완료되었습니다.</strong>
+                      <p>정비 항목 {detail.items.length}건을 확인하고 작업을 시작하세요.</p>
+                    </div>
+                    <button
+                      className="button primary"
+                      disabled={disabled}
+                      onClick={() =>
+                        void command.run(
+                          `${base}/${detail.id}/status`,
+                          { status: "IN_PROGRESS" },
+                          "PATCH",
+                        )
+                      }
+                    >
+                      작업 시작 →
+                    </button>
+                  </section>
+                )}
+
+                {detail.status === "IN_PROGRESS" && (
+                  <section className="workflow-cta-panel">
+                    <div>
+                      <strong>작업 진행 중</strong>
+                      <p>
+                        항목 진행률 {detail.items.filter((i) => i.status === "COMPLETED" || i.status === "SKIPPED").length} / {detail.items.length}
+                      </p>
+                    </div>
+                    {(admin || mechanic) && (
+                      <div className="workflow-cta-actions">
+                        <button
+                          className="button primary"
+                          disabled={
+                            disabled ||
+                            detail.items.some(
+                              (i) => i.status !== "COMPLETED" && i.status !== "SKIPPED",
+                            )
+                          }
+                          title={
+                            detail.items.some(
+                              (i) => i.status !== "COMPLETED" && i.status !== "SKIPPED",
+                            )
+                              ? `남은 작업 ${detail.items.filter((i) => i.status !== "COMPLETED" && i.status !== "SKIPPED").length}개를 완료하거나 건너뜀 처리해 주세요.`
+                              : undefined
+                          }
+                          onClick={() =>
+                            void command.run(
+                              `${base}/${detail.id}/status`,
+                              { status: "COMPLETED" },
+                              "PATCH",
+                            )
+                          }
+                        >
+                          정비 작업 완료 →
+                        </button>
+                        <button
+                          className="button secondary"
+                          disabled={disabled}
+                          onClick={() =>
+                            void command.run(
+                              `${base}/${detail.id}/status`,
+                              { status: "WAITING_PARTS" },
+                              "PATCH",
+                            )
+                          }
+                        >
+                          작업 일시정지
+                        </button>
+                      </div>
+                    )}
+                    {detail.items.some(
+                      (i) => i.status !== "COMPLETED" && i.status !== "SKIPPED",
+                    ) && (
+                      <p className="workflow-cta-help">
+                        남은 작업 {detail.items.filter((i) => i.status !== "COMPLETED" && i.status !== "SKIPPED").length}개를 완료하거나 건너뜀 처리해 주세요.
+                      </p>
+                    )}
+                  </section>
+                )}
+
+                {detail.status === "WAITING_PARTS" && (
+                  <section className="workflow-waiting-banner">
+                    <div>
+                      <strong>부품 대기로 작업이 일시정지되었습니다.</strong>
+                      <p>부품 준비가 끝나면 작업을 재개하세요.</p>
+                    </div>
+                    {(admin || mechanic) && (
+                      <button
+                        className="button primary"
+                        disabled={disabled}
+                        onClick={() =>
+                          void command.run(
+                            `${base}/${detail.id}/status`,
+                            { status: "IN_PROGRESS" },
+                            "PATCH",
+                          )
+                        }
+                      >
+                        작업 재개
+                      </button>
+                    )}
+                  </section>
                 )}
 
                 {detail.released_at ? (
@@ -810,7 +964,7 @@ export function WorkOrders({
                                 </option>
                                 {workItemTransitions[i.status].map((status) => (
                                   <option key={status} value={status}>
-                                    {workItemLabel[status]}
+                                    {workItemActionLabel(i.status, status)}
                                   </option>
                                 ))}
                               </select>
@@ -889,7 +1043,8 @@ export function WorkOrders({
                     </form>
                   </section>
                 )}
-                {(admin || mechanic) && workTransitions[detail.status].length > 0 && (
+                {(admin || mechanic) &&
+                  ["RECEIVED", "IN_PROGRESS", "WAITING_PARTS"].includes(detail.status) && (
                   <>
                     {admin && <form
                       onSubmit={(e) => {
@@ -928,52 +1083,49 @@ export function WorkOrders({
                         <button className="button secondary">담당 배정</button>
                       </fieldset>
                     </form>}
-                    <form
-                      className="work-order-progress-form"
-                      onSubmit={(e) => {
-                        const f = fields(e);
-                        const status = f.get("status");
-                        if (
-                          status === "CANCELLED" &&
-                          !window.confirm(
-                            "작업을 취소합니다. 사용한 부품은 자동 반환되지 않습니다. 진행하시겠습니까?",
-                          )
-                        )
-                          return;
-                        void command.run(
-                          `${base}/${detail.id}/status`,
-                          { status, reason: f.get("reason") },
-                          "PATCH",
-                        );
-                      }}
-                    >
-                      <fieldset
-                        className="work-order-progress-fields"
-                        disabled={disabled}
-                      >
-                        <label>
-                          작업 단계
-                          <select name="status" key={detail.status}>
-                            {workTransitions[detail.status].map((s) => (
-                              <option key={s} value={s}>
-                                {workLabel[s]}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          사유
-                          <span className="field-help">
-                            취소 처리 시 필수
-                          </span>
-                          <input name="reason" maxLength={900} />
-                        </label>
-                        <button className="button primary work-apply-button">
-                          적용
-                        </button>
-                      </fieldset>
-                    </form>
                   </>
+                )}
+                {(admin || mechanic) &&
+                  !["COMPLETED", "CANCELLED"].includes(detail.status) && (
+                  <section className="workflow-other-actions">
+                    <h3>기타 작업</h3>
+                    {!showCancelForm ? (
+                      <button
+                        className="button danger"
+                        disabled={disabled}
+                        onClick={() => setShowCancelForm(true)}
+                      >
+                        작업 취소
+                      </button>
+                    ) : (
+                      <form
+                        className="work-order-progress-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const f = fields(e);
+                          const reason = String(f.get("reason") ?? "").trim();
+                          if (!reason) {
+                            setFormError("취소 사유를 입력해 주세요.");
+                            return;
+                          }
+                          setFormError("");
+                          void command.run(
+                            `${base}/${detail.id}/status`,
+                            { status: "CANCELLED", reason },
+                            "PATCH",
+                          );
+                        }}
+                      >
+                        <fieldset className="work-order-progress-fields" disabled={disabled}>
+                          <label>
+                            취소 사유
+                            <input name="reason" maxLength={900} required />
+                          </label>
+                          <button className="button danger">작업 취소</button>
+                        </fieldset>
+                      </form>
+                    )}
+                  </section>
                 )}
                 {admin && (
                   <section>
