@@ -6,7 +6,8 @@
 - Phase 2 — Mechanic Workflow: 완료
 - Phase 2 Hotfix — mechanic suggested parts: 완료
 - Phase 3 — Admin Operations & Notifications: 완료
-- 현재 다음 구현: Phase 4 — Finance & Cost
+- Phase 4A — Inventory Cost Core: 완료
+- 현재 다음 구현: Phase 4 후속 범위 — 원가·수익 조회
 
 이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
 `docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
@@ -95,6 +96,15 @@ PC 운영 환경을 우선해 구현했다.
 - 매출 / 원가 / 기여이익 조회
 
 기존 고객 invoice snapshot은 유지한다.
+
+Phase 4A 완료 범위:
+
+- 판매가와 분리된 매입원가 lot 및 allocation 원장
+- 기존 재고 UNKNOWN opening lot
+- 입고 원가, FIFO 사용, 원래 lot 반환, legacy 반환
+- 재고 조정 원가 처리와 동시성·멱등성·rollback 검증
+
+재무 dashboard, 정비사·공임 원가, 매출·원가·기여이익 조회와 원가 입력 UI는 후속 범위다.
 
 ---
 

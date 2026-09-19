@@ -77,6 +77,8 @@ class PhaseFourIntegrationTest {
     db.update("DELETE FROM invoice_items");
     db.update("DELETE FROM invoices");
     // Disposable test DB only: production has no delete endpoints for these records.
+    db.update("DELETE FROM inventory_cost_allocations");
+    db.update("DELETE FROM inventory_cost_lots");
     db.update("DELETE FROM stock_movements WHERE kind='RETURN'");
     db.update("DELETE FROM stock_movements");
     db.update("DELETE FROM work_order_events");

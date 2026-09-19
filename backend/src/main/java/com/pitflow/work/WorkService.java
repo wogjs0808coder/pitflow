@@ -806,7 +806,16 @@ public class WorkService {
       throw conflict("워셔액 보충은 한 작업에서 한 번만 기록할 수 있습니다.");
     }
   }
-  private void movement(
+  private BigDecimal purchaseCost(BigDecimal value) {
+    if (value == null) return null;
+    if (value.signum() < 0
+        || value.stripTrailingZeros().scale() > 3
+        || value.compareTo(MAX_QUANTITY) > 0)
+      throw bad("매입 단가는 0 이상인 소수 셋째 자리까지 입력해 주세요.");
+    return value.stripTrailingZeros();
+  }
+
+  private UUID movement(
       UUID operation,
       UUID actor,
       Map<String, Object> p,
@@ -820,11 +829,12 @@ public class WorkService {
     if (balance.signum() < 0) throw conflict(p.get("name") + ": 재고가 부족합니다.");
     if (balance.compareTo(MAX_QUANTITY) > 0) throw bad("최대 보관 수량을 초과합니다.");
     db.update("UPDATE parts SET quantity=? WHERE id=?", balance, p.get("id"));
+    UUID movement = UUID.randomUUID();
     db.update(
         "INSERT INTO stock_movements"
             + " (id,operation_id,part_id,work_order_id,original_use_id,kind,quantity,balance_after,part_name,unit,unit_price,actor_id,reason,created_at)"
             + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        UUID.randomUUID(),
+        movement,
         operation,
         p.get("id"),
         work,
@@ -838,6 +848,109 @@ public class WorkService {
         actor,
         reason.strip(),
         now());
+    return movement;
+  }
+
+  private void createCostLot(
+      UUID part,
+      UUID sourceMovement,
+      String origin,
+      BigDecimal quantity,
+      BigDecimal unitCost) {
+    var timestamp = now();
+    db.update(
+        "INSERT INTO inventory_cost_lots"
+            + " (id,part_id,source_movement_id,origin,original_quantity,remaining_quantity,purchase_unit_cost,cost_known,received_at,created_at)"
+            + " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        UUID.randomUUID(),
+        part,
+        sourceMovement,
+        origin,
+        quantity,
+        quantity,
+        unitCost,
+        unitCost != null,
+        timestamp,
+        timestamp);
+  }
+
+  private void consumeCostLots(UUID movement, UUID part, BigDecimal quantity) {
+    BigDecimal remaining = quantity;
+    var lots =
+        db.queryForList(
+            "SELECT * FROM inventory_cost_lots WHERE part_id=? AND remaining_quantity>0"
+                + " ORDER BY received_at,id FOR UPDATE",
+            part);
+    for (var lot : lots) {
+      if (remaining.signum() == 0) break;
+      BigDecimal available = number(lot, "remaining_quantity");
+      BigDecimal allocated = available.min(remaining);
+      db.update(
+          "UPDATE inventory_cost_lots SET remaining_quantity=? WHERE id=?",
+          available.subtract(allocated),
+          lot.get("id"));
+      db.update(
+          "INSERT INTO inventory_cost_allocations"
+              + " (id,movement_id,lot_id,allocation_type,source_allocation_id,quantity,purchase_unit_cost,cost_known,created_at)"
+              + " VALUES (?,?,?,'CONSUME',NULL,?,?,?,?)",
+          UUID.randomUUID(),
+          movement,
+          lot.get("id"),
+          allocated,
+          lot.get("purchase_unit_cost"),
+          lot.get("cost_known"),
+          now());
+      remaining = remaining.subtract(allocated);
+    }
+    if (remaining.signum() != 0)
+      throw conflict("재고 원가 lot 수량이 실제 재고와 일치하지 않습니다.");
+  }
+
+  private void restoreCostLots(UUID returnMovement, UUID originalUse, UUID part, BigDecimal quantity) {
+    var allocations =
+        db.queryForList(
+            "SELECT a.*,l.received_at AS lot_received_at FROM inventory_cost_allocations a"
+                + " JOIN inventory_cost_lots l ON l.id=a.lot_id"
+                + " WHERE a.movement_id=? AND a.allocation_type='CONSUME'"
+                + " ORDER BY l.received_at DESC,l.id DESC,a.id DESC FOR UPDATE",
+            originalUse);
+    if (allocations.isEmpty()) {
+      createCostLot(part, returnMovement, "LEGACY_RETURN", quantity, null);
+      return;
+    }
+    BigDecimal remaining = quantity;
+    for (var allocation : allocations) {
+      if (remaining.signum() == 0) break;
+      BigDecimal restored =
+          db.queryForObject(
+              "SELECT COALESCE(SUM(quantity),0) FROM inventory_cost_allocations"
+                  + " WHERE source_allocation_id=? AND allocation_type='RESTORE'",
+              BigDecimal.class,
+              allocation.get("id"));
+      BigDecimal available = number(allocation, "quantity").subtract(restored);
+      if (available.signum() <= 0) continue;
+      BigDecimal amount = available.min(remaining);
+      var lot = one("SELECT * FROM inventory_cost_lots WHERE id=? FOR UPDATE", allocation.get("lot_id"));
+      db.update(
+          "UPDATE inventory_cost_lots SET remaining_quantity=? WHERE id=?",
+          number(lot, "remaining_quantity").add(amount),
+          lot.get("id"));
+      db.update(
+          "INSERT INTO inventory_cost_allocations"
+              + " (id,movement_id,lot_id,allocation_type,source_allocation_id,quantity,purchase_unit_cost,cost_known,created_at)"
+              + " VALUES (?,?,?,'RESTORE',?,?,?,?,?)",
+          UUID.randomUUID(),
+          returnMovement,
+          lot.get("id"),
+          allocation.get("id"),
+          amount,
+          allocation.get("purchase_unit_cost"),
+          allocation.get("cost_known"),
+          now());
+      remaining = remaining.subtract(amount);
+    }
+    if (remaining.signum() != 0)
+      throw conflict("반환할 원가 allocation 수량을 확인해 주세요.");
   }
 
   private Map<String, Object> operation(UUID key) {
@@ -855,15 +968,22 @@ public class WorkService {
 
   public Map<String, Object> receipt(String email, UUID key, UUID part, Quantity r) {
     BigDecimal amount = quantity(r.quantity());
+    BigDecimal unitCost = purchaseCost(r.purchaseUnitCost());
+    var request = new LinkedHashMap<String, Object>();
+    request.put("quantity", amount);
+    request.put("reason", r.reason());
+    request.put("purchaseUnitCost", unitCost);
     return command(
         email,
         key,
         "receipt/" + part,
-        Map.of("quantity", amount, "reason", r.reason()),
+        request,
         () -> {
           var p = lockPart(part);
           if (!active(p)) throw conflict("비활성 부품은 입고할 수 없습니다.");
-          movement(key, actor(email, true), p, null, null, "RECEIPT", amount, r.reason());
+          UUID movement =
+              movement(key, actor(email, true), p, null, null, "RECEIPT", amount, r.reason());
+          createCostLot(part, movement, "RECEIPT", amount, unitCost);
           return operation(key);
         });
   }
@@ -881,8 +1001,9 @@ public class WorkService {
           if (current.compareTo(r.expectedQuantity()) != 0)
             throw conflict("다른 작업으로 재고가 변경되었습니다. 새로고침 후 실사 수량을 다시 확인해 주세요.");
           var delta = r.quantity().subtract(current);
-          if (delta.signum() != 0)
-            movement(
+          if (delta.signum() != 0) {
+            UUID movement =
+                movement(
                 key,
                 actor(email, true),
                 p,
@@ -891,6 +1012,10 @@ public class WorkService {
                 delta.signum() > 0 ? "ADJUST_IN" : "ADJUST_OUT",
                 delta.abs(),
                 r.reason());
+            if (delta.signum() > 0)
+              createCostLot(part, movement, "ADJUST_IN", delta, null);
+            else consumeCostLots(movement, part, delta.abs());
+          }
           return operation(key);
         });
   }
@@ -933,8 +1058,9 @@ public class WorkService {
               throw conflict(p.get("name") + ": 재고가 부족합니다.");
             locked.put(line.partId(), p);
           }
-          for (var line : lines)
-            movement(
+          for (var line : lines) {
+            UUID movement =
+                movement(
                 key,
                 actor,
                 locked.get(line.partId()),
@@ -943,6 +1069,8 @@ public class WorkService {
                 "USE",
                 line.quantity(),
                 r.reason());
+            consumeCostLots(movement, line.partId(), line.quantity());
+          }
           return operation(key);
         },
         mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
@@ -994,8 +1122,10 @@ public class WorkService {
           p.put("name", use.get("part_name"));
           p.put("unit", use.get("unit"));
           p.put("unit_price", use.get("unit_price"));
-          movement(
-              key, actor, p, work, r.originalUseId(), "RETURN", amount, r.reason());
+          UUID movement =
+              movement(
+                  key, actor, p, work, r.originalUseId(), "RETURN", amount, r.reason());
+          restoreCostLots(movement, r.originalUseId(), id(use, "part_id"), amount);
           return operation(key);
         },
         mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));

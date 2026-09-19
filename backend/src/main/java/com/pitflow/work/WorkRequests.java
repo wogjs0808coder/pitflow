@@ -69,7 +69,8 @@ public final class WorkRequests {
   public record Quantity(
       @NotNull @DecimalMin(value = "0", inclusive = false) @Digits(integer = 11, fraction = 3)
           BigDecimal quantity,
-      @NotBlank @Size(max = 500) String reason) {}
+      @NotBlank @Size(max = 500) String reason,
+      @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal purchaseUnitCost) {}
 
   public record Return(
       @NotNull UUID originalUseId,
