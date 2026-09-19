@@ -78,6 +78,8 @@ class PhaseThreeIntegrationTest {
     db.update("DELETE FROM notifications");
     db.update("DELETE FROM part_shortage_reports");
     // Disposable test DB only: production has no delete endpoints for these records.
+    db.update("DELETE FROM inventory_cost_allocations");
+    db.update("DELETE FROM inventory_cost_lots");
     db.update("DELETE FROM stock_movements WHERE kind='RETURN'");
     db.update("DELETE FROM stock_movements");
     db.update("DELETE FROM work_order_events");
