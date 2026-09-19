@@ -47,6 +47,18 @@ export const workItemTransitions: Record<
   SKIPPED: ["IN_PROGRESS"],
 };
 
+export function workItemActionLabel(
+  current: WorkOrderItemStatus,
+  next: WorkOrderItemStatus,
+): string {
+  if (current === "PENDING" && next === "IN_PROGRESS") return "작업 시작";
+  if (current === "WAITING_PARTS" && next === "IN_PROGRESS") return "작업 재개";
+  if (current === "IN_PROGRESS" && next === "PENDING") return "대기로 되돌리기";
+  if ((current === "COMPLETED" || current === "SKIPPED") && next === "IN_PROGRESS")
+    return "작업 다시 열기";
+  return workItemLabel[next];
+}
+
 export type Decimal = string | number;
 
 export type Mechanic = {
