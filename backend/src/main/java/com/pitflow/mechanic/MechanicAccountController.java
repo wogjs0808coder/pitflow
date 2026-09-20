@@ -38,4 +38,10 @@ public class MechanicAccountController {
       @PathVariable UUID id, @Valid @RequestBody Active request) {
     return accounts.setActive(id, request.active());
   }
+
+  @PatchMapping("/{id}/hourly-cost")
+  public MechanicAccountView setHourlyCost(
+      @PathVariable UUID id, @Valid @RequestBody HourlyCost request) {
+    return accounts.setHourlyCost(id, request.hourlyCost());
+  }
 }

@@ -11,6 +11,7 @@ import {
   Settings2,
   LogOut,
   ArrowUpRight,
+  BadgeDollarSign,
 } from "lucide-react";
 
 import { useAuth } from "./auth-provider";
@@ -141,6 +142,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
           icon: Settings2,
         },
         {
+          href: "/admin/finance",
+          label: "재무·원가 분석",
+          icon: BadgeDollarSign,
+        },
+        {
           href: "/admin/parts",
           label: "부품·재고 관리",
           icon: Settings2,
@@ -184,6 +190,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
     {
       href: "/admin/billing",
       label: "정산·수납",
+    },
+    {
+      href: "/admin/finance",
+      label: "재무",
     },
     {
       href: "/admin/parts",

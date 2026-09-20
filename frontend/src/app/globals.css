@@ -619,6 +619,46 @@ footer {
   border-top: 2px solid var(--ink);
   font-size: 1.1rem;
 }
+
+.finance-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.finance-unknown {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.finance-warning {
+  margin: 1rem 0 0;
+  border-left: 4px solid var(--danger);
+  background: #fff3f4;
+  padding: 0.8rem 1rem;
+  color: var(--danger);
+}
+
+.finance-detail {
+  display: grid;
+  gap: 0.7rem;
+  margin: 1rem 0;
+}
+
+.finance-detail div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.6rem;
+}
+
+.finance-detail dt {
+  color: var(--muted);
+}
+
+.finance-detail dd {
+  margin: 0;
+  font-weight: 700;
+}
 .history-filter {
   padding: 18px;
   margin-bottom: 22px;

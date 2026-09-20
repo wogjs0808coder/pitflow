@@ -4,6 +4,7 @@ import com.pitflow.common.ApiException;
 import com.pitflow.mechanic.MechanicAccountRequests.Create;
 import com.pitflow.mechanic.MechanicAccountRequests.Link;
 import com.pitflow.user.*;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.http.HttpStatus;
@@ -28,7 +29,7 @@ public class MechanicAccountService {
   public List<MechanicAccountView> list() {
     return db.query(
         """
-        SELECT m.id,m.user_id,m.code,m.name,u.email,m.active
+        SELECT m.id,m.user_id,m.code,m.name,u.email,m.active,m.hourly_cost
         FROM mechanics m LEFT JOIN users u ON u.id=m.user_id
         ORDER BY m.code
         """,
@@ -39,7 +40,8 @@ public class MechanicAccountService {
                 rs.getString("code"),
                 rs.getString("name"),
                 rs.getString("email"),
-                rs.getBoolean("active")));
+                rs.getBoolean("active"),
+                rs.getBigDecimal("hourly_cost")));
   }
 
   @Transactional
@@ -61,12 +63,13 @@ public class MechanicAccountService {
             new AppUser(email, passwords.encode(request.password()), name, AppUser.Role.MECHANIC));
     UUID mechanic = UUID.randomUUID();
     db.update(
-        "INSERT INTO mechanics (id,user_id,code,name,active) VALUES (?,?,?,?,?)",
+        "INSERT INTO mechanics (id,user_id,code,name,active,hourly_cost) VALUES (?,?,?,?,?,?)",
         mechanic,
         account.getId(),
         code,
         name,
-        request.active());
+        request.active(),
+        request.hourlyCost());
     return find(mechanic);
   }
 
@@ -100,11 +103,19 @@ public class MechanicAccountService {
     return find(mechanic);
   }
 
+  @Transactional
+  public MechanicAccountView setHourlyCost(UUID mechanic, BigDecimal hourlyCost) {
+    var rows = db.queryForList("SELECT id FROM mechanics WHERE id=? FOR UPDATE", mechanic);
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
+    db.update("UPDATE mechanics SET hourly_cost=? WHERE id=?", hourlyCost, mechanic);
+    return find(mechanic);
+  }
+
   private MechanicAccountView find(UUID mechanic) {
     var rows =
         db.query(
             """
-            SELECT m.id,m.user_id,m.code,m.name,u.email,m.active
+            SELECT m.id,m.user_id,m.code,m.name,u.email,m.active,m.hourly_cost
             FROM mechanics m LEFT JOIN users u ON u.id=m.user_id
             WHERE m.id=?
             """,
@@ -115,7 +126,8 @@ public class MechanicAccountService {
                     rs.getString("code"),
                     rs.getString("name"),
                     rs.getString("email"),
-                    rs.getBoolean("active")),
+                    rs.getBoolean("active"),
+                    rs.getBigDecimal("hourly_cost")),
             mechanic);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
     return rows.get(0);

@@ -229,7 +229,7 @@ export default function PartsPage() {
                 />
               </label>
               <label>
-                단위당 금액 (원)
+                판매 단가 (원)
                 <input
                   name="price"
                   required
@@ -477,7 +477,7 @@ export default function PartsPage() {
                           />
                         </label>
                         <label>
-                          단위당 금액
+                          판매 단가
                           <input
                             name="price"
                             defaultValue={chosen.unit_price}
@@ -504,11 +504,15 @@ export default function PartsPage() {
                     key={`${chosen.id}-${revision}-receipt`}
                     onSubmit={(e) => {
                       const f = form(e);
+                      const purchaseUnitCost = f.get("purchaseUnitCost");
                       void command.run(
                         `/api/admin/parts/${chosen.id}/receipts`,
                         {
                           quantity: f.get("quantity"),
                           reason: f.get("reason"),
+                          ...(purchaseUnitCost === ""
+                            ? {}
+                            : { purchaseUnitCost }),
                         },
                       );
                     }}
@@ -529,6 +533,20 @@ export default function PartsPage() {
                       <label>
                         입고 사유
                         <input name="reason" required maxLength={500} />
+                      </label>
+                      <label>
+                        매입 단가 (원, 선택)
+                        <input
+                          name="purchaseUnitCost"
+                          type="number"
+                          min="0"
+                          max="99999999999.999"
+                          step="0.001"
+                          placeholder="미입력 시 원가 미확정"
+                        />
+                        <span className="field-help">
+                          0원은 확인된 0원이며, 미입력은 UNKNOWN으로 기록됩니다.
+                        </span>
                       </label>
                       <button className="button primary">입고 기록</button>
                     </fieldset>

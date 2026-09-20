@@ -6,6 +6,7 @@ import com.pitflow.common.ApiException;
 import com.pitflow.notification.NotificationService;
 import com.pitflow.work.WorkRequests.*;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Timestamp;
@@ -94,6 +95,14 @@ public class WorkService {
 
   private List<Map<String, Object>> rows(String sql, Object... args) {
     return db.queryForList(sql, args).stream().map(this::clean).toList();
+  }
+
+  private Map<String, Object> hideInternalCosts(Map<String, Object> work) {
+    work.remove("labor_minutes_snapshot");
+    work.remove("labor_hourly_cost_snapshot");
+    work.remove("labor_cost_snapshot");
+    work.remove("labor_cost_known");
+    return work;
   }
 
   private UUID actor(String email, boolean admin) {
@@ -348,6 +357,46 @@ public class WorkService {
       throw conflict("종료된 작업은 수정할 수 없습니다.");
   }
 
+  private void snapshotLaborCost(UUID work, Map<String, Object> order) {
+    Integer minutes =
+        db.queryForObject(
+            "SELECT COALESCE(SUM(duration_minutes*quantity),0) FROM work_order_items"
+                + " WHERE work_order_id=? AND status='COMPLETED'",
+            Integer.class,
+            work);
+    Object mechanic = order.get("mechanic_id");
+    if (mechanic == null) {
+      db.update(
+          "UPDATE work_orders SET labor_minutes_snapshot=?,labor_hourly_cost_snapshot=NULL,"
+              + "labor_cost_snapshot=NULL,labor_cost_known=FALSE WHERE id=?",
+          minutes,
+          work);
+      return;
+    }
+    var profile = one("SELECT hourly_cost FROM mechanics WHERE id=? FOR UPDATE", mechanic);
+    Object hourlyValue = profile.get("hourly_cost");
+    if (hourlyValue == null) {
+      db.update(
+          "UPDATE work_orders SET labor_minutes_snapshot=?,labor_hourly_cost_snapshot=NULL,"
+              + "labor_cost_snapshot=NULL,labor_cost_known=FALSE WHERE id=?",
+          minutes,
+          work);
+      return;
+    }
+    BigDecimal hourly = new BigDecimal(hourlyValue.toString());
+    BigDecimal cost =
+        hourly
+            .multiply(BigDecimal.valueOf(minutes))
+            .divide(BigDecimal.valueOf(60), 0, RoundingMode.HALF_UP);
+    db.update(
+        "UPDATE work_orders SET labor_minutes_snapshot=?,labor_hourly_cost_snapshot=?,"
+            + "labor_cost_snapshot=?,labor_cost_known=TRUE WHERE id=?",
+        minutes,
+        hourly,
+        cost,
+        work);
+  }
+
   private void event(UUID work, UUID actor, String type, String detail) {
     db.update(
         "INSERT INTO work_order_events (id,work_order_id,actor_id,event_type,detail,created_at)"
@@ -436,14 +485,20 @@ public class WorkService {
 
   public List<Map<String, Object>> list(String email, boolean admin) {
     UUID user = actor(email, admin);
-    return admin
-        ? rows("SELECT * FROM work_orders ORDER BY received_at DESC,id")
-        : rows("SELECT * FROM work_orders WHERE customer_id=? ORDER BY received_at DESC,id", user);
+    if (admin) {
+      return rows("SELECT * FROM work_orders ORDER BY received_at DESC,id");
+    }
+    return rows("SELECT * FROM work_orders WHERE customer_id=? ORDER BY received_at DESC,id", user)
+        .stream()
+        .map(this::hideInternalCosts)
+        .toList();
   }
 
   public List<Map<String, Object>> mechanicList(UUID mechanic) {
-    return rows(
-        "SELECT * FROM work_orders WHERE mechanic_id=? ORDER BY received_at DESC,id", mechanic);
+    return rows("SELECT * FROM work_orders WHERE mechanic_id=? ORDER BY received_at DESC,id", mechanic)
+        .stream()
+        .map(this::hideInternalCosts)
+        .toList();
   }
 
   public Map<String, Object> detail(String email, UUID work, boolean admin) {
@@ -453,12 +508,16 @@ public class WorkService {
             admin
                 ? one("SELECT * FROM work_orders WHERE id=?", work)
                 : one("SELECT * FROM work_orders WHERE id=? AND customer_id=?", work, user));
+    if (!admin) {
+      hideInternalCosts(result);
+    }
     return detail(result, work, admin);
   }
 
   public Map<String, Object> mechanicDetail(UUID mechanic, UUID work) {
     var result =
-        clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic));
+        hideInternalCosts(
+            clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic)));
     var detail = detail(result, work, false);
     detail.put(
         "suggested_parts",
@@ -643,6 +702,7 @@ public class WorkService {
                   > 0) throw conflict("모든 정비 항목을 완료 처리한 후 작업을 완료해 주세요.");
           if (target.equals("CANCELLED") && (r.reason() == null || r.reason().isBlank()))
             throw bad("취소 사유를 입력해 주세요.");
+          if (target.equals("COMPLETED")) snapshotLaborCost(work, w);
           db.update("UPDATE work_orders SET status=? WHERE id=?", target, work);
           if (target.equals("COMPLETED"))
             db.update("UPDATE work_orders SET completed_at=? WHERE id=?", now(), work);
