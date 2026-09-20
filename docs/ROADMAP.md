@@ -7,7 +7,8 @@
 - Phase 2 Hotfix — mechanic suggested parts: 완료
 - Phase 3 — Admin Operations & Notifications: 완료
 - Phase 4A — Inventory Cost Core: 완료
-- 현재 다음 구현: Phase 4 후속 범위 — 원가·수익 조회
+- Phase 4B — Finance Integration: 완료
+- 현재 다음 구현: Phase 4C — Validation
 
 이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
 `docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
@@ -105,6 +106,15 @@ Phase 4A 완료 범위:
 - 재고 조정 원가 처리와 동시성·멱등성·rollback 검증
 
 재무 dashboard, 정비사·공임 원가, 매출·원가·기여이익 조회와 원가 입력 UI는 후속 범위다.
+
+Phase 4B 완료 범위:
+
+- 정비사 시간당 원가와 WorkOrder 완료 시점 인건비 snapshot
+- invoice 매출, FIFO 부품원가, 인건비원가, 총원가, 기여이익 조회
+- UNKNOWN 원가를 확정 이익으로 계산하지 않는 관리자 Finance API/UI
+- 입고 매입단가와 정비사 원가 관리 UI
+
+Phase 4 전체 완료 전 Phase 4C에서 PostgreSQL·브라우저·운영 회귀 validation을 진행한다.
 
 ---
 

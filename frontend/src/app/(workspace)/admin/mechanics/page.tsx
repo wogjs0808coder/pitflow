@@ -11,6 +11,7 @@ type MechanicAccount = {
   name: string;
   email: string | null;
   active: boolean;
+  hourlyCost: number | null;
 };
 
 export default function MechanicsPage() {
@@ -74,12 +75,14 @@ export default function MechanicsPage() {
         <form onSubmit={(event) => void submit(event, "/api/admin/mechanic-accounts", (data) => ({
           code: data.get("code"), name: data.get("name"), email: data.get("email"),
           password: data.get("password"), active: data.get("active") === "on",
+          hourlyCost: data.get("hourlyCost") === "" ? null : data.get("hourlyCost"),
         }))}>
           <fieldset disabled={busy}>
             <label>사번<input name="code" required maxLength={40} /></label>
             <label>이름<input name="name" required maxLength={50} /></label>
             <label>이메일<input name="email" type="email" required maxLength={254} /></label>
             <label>초기 비밀번호<input name="password" type="password" required minLength={12} maxLength={64} autoComplete="new-password" /></label>
+            <label>시간당 원가 (원, 선택)<input name="hourlyCost" type="number" min="0" step="1" placeholder="미입력 시 미확정" /></label>
             <label><input name="active" type="checkbox" defaultChecked /> 활성</label>
             <button className="button primary">등록</button>
           </fieldset>
@@ -89,6 +92,15 @@ export default function MechanicsPage() {
         <article className="work-panel" key={mechanic.id}>
           <h2>{mechanic.code} · {mechanic.name}</h2>
           <p>{mechanic.active ? "활성" : "비활성"} · {mechanic.accountId ? `계정 연결됨 (${mechanic.email})` : "로그인 계정 미연결"}</p>
+          <p>시간당 원가: {mechanic.hourlyCost === null ? "미확정" : `${mechanic.hourlyCost.toLocaleString("ko-KR")}원`}</p>
+          <form onSubmit={(event) => void submit(event, `/api/admin/mechanic-accounts/${mechanic.id}/hourly-cost`, (data) => ({
+            hourlyCost: data.get("hourlyCost") === "" ? null : data.get("hourlyCost"),
+          }), "PATCH")}>
+            <fieldset disabled={busy}>
+              <label>시간당 원가 (원)<input name="hourlyCost" type="number" min="0" step="1" defaultValue={mechanic.hourlyCost ?? ""} placeholder="비우면 미확정" /></label>
+              <button className="button secondary">원가 저장</button>
+            </fieldset>
+          </form>
           {!mechanic.accountId && (
             <form onSubmit={(event) => void submit(event, `/api/admin/mechanic-accounts/${mechanic.id}/account`, (data) => ({
               email: data.get("email"), password: data.get("password"),

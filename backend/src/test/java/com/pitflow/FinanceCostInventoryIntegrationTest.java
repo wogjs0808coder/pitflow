@@ -549,4 +549,241 @@ class FinanceCostInventoryIntegrationTest {
         .isEqualByComparingTo("40000");
     assertReconciled(part);
   }
+
+  @Test
+  void laborSnapshotAndFinanceUseHistoricalKnownCosts() throws Exception {
+    String costPath = "/api/admin/mechanic-accounts/" + mechanic + "/hourly-cost";
+    assertThat(request("PATCH", costPath, Map.of("hourlyCost", -1), UUID.randomUUID()).getResponse().getStatus())
+        .isEqualTo(400);
+    ok("PATCH", costPath, Map.of("hourlyCost", 120000));
+
+    UUID work = work(appointment), part = part("COST-FINANCE");
+    db.update("UPDATE parts SET unit='L' WHERE id=?", part);
+    receipt(part, "1", "10000", UUID.randomUUID());
+    receipt(part, "1", "20000", UUID.randomUUID());
+    UUID use =
+        UUID.fromString(
+            use(work, part, "2", UUID.randomUUID()).get("movements").get(0).get("id").asText());
+    ok(
+        "POST",
+        "/api/admin/work-orders/" + work + "/parts/return",
+        Map.of("originalUseId", use, "quantity", "0.5", "reason", "부분 반환"));
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, work);
+    ok("PATCH", "/api/admin/work-orders/" + work + "/items/" + item, Map.of("done", true));
+
+    UUID failedKey = UUID.randomUUID();
+    db.execute(
+        "ALTER TABLE work_orders ADD CONSTRAINT test_reject_labor_snapshot CHECK (labor_cost_snapshot<>60000)");
+    try {
+      assertThat(
+              request(
+                      "PATCH",
+                      "/api/admin/work-orders/" + work + "/status",
+                      Map.of("status", "COMPLETED"),
+                      failedKey)
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(409);
+    } finally {
+      db.execute("ALTER TABLE work_orders DROP CONSTRAINT test_reject_labor_snapshot");
+    }
+    assertThat(db.queryForObject("SELECT status FROM work_orders WHERE id=?", String.class, work))
+        .isEqualTo("IN_PROGRESS");
+    assertThat(
+            db.queryForObject("SELECT COUNT(*) FROM stock_operations WHERE id=?", Integer.class, failedKey))
+        .isZero();
+
+    UUID completeKey = UUID.randomUUID();
+    JsonNode completed =
+        ok(
+            "PATCH",
+            "/api/admin/work-orders/" + work + "/status",
+            Map.of("status", "COMPLETED"),
+            completeKey);
+    assertThat(
+            ok(
+                "PATCH",
+                "/api/admin/work-orders/" + work + "/status",
+                Map.of("status", "COMPLETED"),
+                completeKey))
+        .isEqualTo(completed);
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_cost_snapshot FROM work_orders WHERE id=?", BigDecimal.class, work))
+        .isEqualByComparingTo("60000");
+    ok("PATCH", costPath, Map.of("hourlyCost", 240000));
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_cost_snapshot FROM work_orders WHERE id=?", BigDecimal.class, work))
+        .isEqualByComparingTo("60000");
+
+    JsonNode preview = read("/api/admin/billing/work-orders/" + work + "/preview");
+    ok(
+        "POST",
+        "/api/admin/billing/work-orders/" + work + "/invoices",
+        Map.of(
+            "expectedFingerprint", preview.get("fingerprint").asText(),
+            "confirmZeroPrices", true));
+    JsonNode finance = read("/api/admin/finance/work-orders/" + work);
+    assertThat(finance.get("revenue").decimalValue()).isEqualByComparingTo("50000");
+    assertThat(finance.get("parts_cost_known").decimalValue()).isEqualByComparingTo("20000");
+    assertThat(finance.get("labor_cost").decimalValue()).isEqualByComparingTo("60000");
+    assertThat(finance.get("total_cost").decimalValue()).isEqualByComparingTo("80000");
+    assertThat(finance.get("contribution_margin").decimalValue()).isEqualByComparingTo("-30000");
+    assertThat(finance.get("has_unknown_cost").asBoolean()).isFalse();
+    JsonNode summary =
+        read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(summary.get("revenue").decimalValue()).isEqualByComparingTo("50000");
+    assertThat(summary.get("total_cost").decimalValue()).isEqualByComparingTo("80000");
+    JsonNode list =
+        read("/api/admin/finance/work-orders?from=2026-09-01&to=2026-09-30");
+    assertThat(list).hasSize(1);
+    assertThat(list.get(0).get("id").asText()).isEqualTo(work.toString());
+  }
+
+  @Test
+  void skippedLaborAndLegacyOrUnknownCostsStayExplicitlyUnknown() throws Exception {
+    ok(
+        "PATCH",
+        "/api/admin/mechanic-accounts/" + mechanic + "/hourly-cost",
+        Map.of("hourlyCost", 120000));
+    UUID skippedWork = work(appointment);
+    UUID skippedItem =
+        db.queryForObject(
+            "SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, skippedWork);
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + skippedWork + "/items/" + skippedItem,
+        Map.of("status", "SKIPPED", "reason", "미수행"));
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + skippedWork + "/status",
+        Map.of("status", "COMPLETED"));
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_minutes_snapshot FROM work_orders WHERE id=?",
+                Integer.class,
+                skippedWork))
+        .isZero();
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_cost_snapshot FROM work_orders WHERE id=?",
+                BigDecimal.class,
+                skippedWork))
+        .isEqualByComparingTo("0");
+
+    UUID legacy = work(appointment("2026-09-21T05:00:00Z"));
+    db.update(
+        "UPDATE work_orders SET status='COMPLETED',completed_at=CURRENT_TIMESTAMP WHERE id=?",
+        legacy);
+    JsonNode legacyFinance = read("/api/admin/finance/work-orders/" + legacy);
+    assertThat(legacyFinance.get("has_unknown_labor_cost").asBoolean()).isTrue();
+    assertThat(legacyFinance.get("total_cost").isNull()).isTrue();
+
+    UUID unknownWork = work(appointment("2026-09-21T07:00:00Z"));
+    UUID unknownPart = part("COST-UNKNOWN-FINANCE");
+    receipt(unknownPart, "1", null, UUID.randomUUID());
+    use(unknownWork, unknownPart, "1", UUID.randomUUID());
+    UUID unknownItem =
+        db.queryForObject(
+            "SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, unknownWork);
+    ok("PATCH", "/api/admin/work-orders/" + unknownWork + "/items/" + unknownItem, Map.of("done", true));
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + unknownWork + "/status",
+        Map.of("status", "COMPLETED"));
+    JsonNode unknown = read("/api/admin/finance/work-orders/" + unknownWork);
+    assertThat(unknown.get("parts_cost_known").decimalValue()).isEqualByComparingTo("0");
+    assertThat(unknown.get("has_unknown_parts_cost").asBoolean()).isTrue();
+    assertThat(unknown.get("contribution_margin").isNull()).isTrue();
+  }
+
+  @Test
+  void internalLaborCostsAreHiddenFromCustomerAndMechanicWorkApis() throws Exception {
+    UUID work = work(appointment);
+
+    String customerEmail = "cost-customer@example.com";
+    String mechanicEmail = "cost-mechanic@example.com";
+
+    var mechanicUser =
+        users.saveAndFlush(
+            new AppUser(mechanicEmail, "hash", "정비사", AppUser.Role.MECHANIC));
+    db.update("UPDATE mechanics SET user_id=? WHERE id=?", mechanicUser.getId(), mechanic);
+
+    MvcResult customerListResult =
+        mvc.perform(
+                get("/api/work-orders")
+                    .with(user(customerEmail).roles("CUSTOMER")))
+            .andReturn();
+    assertThat(customerListResult.getResponse().getStatus()).isEqualTo(200);
+    JsonNode customerList =
+        json.readTree(customerListResult.getResponse().getContentAsString());
+    assertThat(customerList.isArray()).isTrue();
+    assertThat(customerList).hasSize(1);
+
+    MvcResult customerDetailResult =
+        mvc.perform(
+                get("/api/work-orders/" + work)
+                    .with(user(customerEmail).roles("CUSTOMER")))
+            .andReturn();
+    assertThat(customerDetailResult.getResponse().getStatus()).isEqualTo(200);
+    JsonNode customerDetail =
+        json.readTree(customerDetailResult.getResponse().getContentAsString());
+
+    MvcResult mechanicListResult =
+        mvc.perform(
+                get("/api/mechanic/work-orders")
+                    .with(user(mechanicEmail).roles("MECHANIC")))
+            .andReturn();
+    assertThat(mechanicListResult.getResponse().getStatus()).isEqualTo(200);
+    JsonNode mechanicList =
+        json.readTree(mechanicListResult.getResponse().getContentAsString());
+    assertThat(mechanicList.isArray()).isTrue();
+    assertThat(mechanicList).hasSize(1);
+
+    MvcResult mechanicDetailResult =
+        mvc.perform(
+                get("/api/mechanic/work-orders/" + work)
+                    .with(user(mechanicEmail).roles("MECHANIC")))
+            .andReturn();
+    assertThat(mechanicDetailResult.getResponse().getStatus()).isEqualTo(200);
+    JsonNode mechanicDetail =
+        json.readTree(mechanicDetailResult.getResponse().getContentAsString());
+
+    for (String field :
+        List.of(
+            "labor_minutes_snapshot",
+            "labor_hourly_cost_snapshot",
+            "labor_cost_snapshot",
+            "labor_cost_known")) {
+      assertThat(customerList.get(0).has(field))
+          .as("customer list must hide %s", field)
+          .isFalse();
+      assertThat(customerDetail.has(field))
+          .as("customer detail must hide %s", field)
+          .isFalse();
+      assertThat(mechanicList.get(0).has(field))
+          .as("mechanic list must hide %s", field)
+          .isFalse();
+      assertThat(mechanicDetail.has(field))
+          .as("mechanic detail must hide %s", field)
+          .isFalse();
+    }
+  }
+  @Test
+  void financeEndpointsAreAdminOnly() throws Exception {
+    String path = "/api/admin/finance/summary?from=2026-09-01&to=2026-09-30";
+    assertThat(
+            mvc.perform(get(path).with(user("cost-customer@example.com").roles("CUSTOMER")))
+                .andReturn()
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    assertThat(
+            mvc.perform(get(path).with(user("fake-mechanic@example.com").roles("MECHANIC")))
+                .andReturn()
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+  }
 }
