@@ -107,3 +107,34 @@ availability는 `date`, `policy`, `closed`, `durationMinutes`, `totalLaborPrice`
 - 취소·미방문 처리 시 슬롯을 반환합니다. 방문 처리된 예약은 예정 종료까지 슬롯을 유지합니다.
 
 대표 실패: 미인증 401, 관리자 권한·CSRF 실패 403, 타인 예약·차량 404, 중복 시간·금지된 상태 변경·예약 이력 차량 삭제 409, 날짜·항목·시간 형식 오류 400.
+
+## Phase 4 재무 원가
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/admin/finance/summary?from=YYYY-MM-DD&to=YYYY-MM-DD` | 매출·원가·기간 급여·관리 손익·KPI 요약 |
+| GET | `/admin/finance/work-orders?from=YYYY-MM-DD&to=YYYY-MM-DD` | 완료 작업별 finance 목록 |
+| GET | `/admin/finance/work-orders/{id}` | 완료 작업의 자동·수동 원가 상세 |
+| POST | `/admin/finance/work-orders/{id}/cost-resolution` | 과거 UNKNOWN 원가 수동 확정·정정 |
+| GET | `/admin/finance/settings` | 계획 참고 월급·시간·목표 급여 비율 조회 |
+| PATCH | `/admin/finance/settings` | 계획 참고값 변경 |
+| GET | `/admin/finance/entries?from=YYYY-MM-DD&to=YYYY-MM-DD` | 운영비·기타 손익 전표 조회 |
+| POST | `/admin/finance/entries` | append-only 전표 입력 |
+| POST | `/admin/finance/entries/{id}/reversal` | 원 전표의 reversal 입력 |
+| PATCH | `/admin/mechanic-accounts/{id}/salary-cost` | 정비사 월급·기준시간 및 시간당 원가 갱신 |
+
+조회 기간을 모두 생략하면 Asia/Seoul 기준 당월 1일부터 오늘까지를 사용합니다. 모든 변경 요청은 ADMIN, CSRF, `Idempotency-Key`가 필요합니다.
+
+```json
+{
+  "unresolvedPartsCost": 45000,
+  "laborCost": 30000,
+  "reason": "과거 매입전표 및 정비기록 확인"
+}
+```
+
+둘 중 하나의 금액만 보내도 됩니다. 0원은 확인된 값이고 `null`/생략은 해당 구성요소를 변경하지 않는다는 뜻입니다. 자동 원가가 UNKNOWN인 완료 작업에만 적용되며, 정정은 이전 행을 수정하지 않고 새 이력으로 추가됩니다.
+
+급여 입력의 `monthlyBaseSalary`는 null 또는 0 이상, `monthlyStandardHours`는 0보다 커야 합니다. 계산 시간당 원가는 월급을 기준시간으로 나눠 원 단위 반올림하며 이후 완료 작업에만 snapshot됩니다. 재무 설정의 기본값은 계획 참고값으로, 정비사 급여를 자동 입력하지 않습니다. 전표 category는 서버 enum으로 제한되며 음수 금액은 허용하지 않습니다. 취소는 기존 행을 변경하지 않고 reversal 행을 추가합니다.
+
+운영비 category는 `RENT` 임차료, `UTILITIES` 공과금, `INSURANCE` 보험료, `SOFTWARE` 소프트웨어, `SHOP_SUPPLIES` 소모품, `EQUIPMENT_MAINTENANCE` 장비 유지비, `CARD_FEES` 결제 수수료, `DEPRECIATION` 감가상각, `OTHER_OPERATING` 기타 영업비입니다. `OTHER_INCOME`은 기타수익, `INTEREST`는 이자비용, `TAX`는 세금으로 각각 영업이익 이후에 반영합니다. 급여·부품원가는 이 전표에 중복 입력하지 않습니다.

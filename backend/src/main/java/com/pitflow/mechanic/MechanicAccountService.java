@@ -3,8 +3,11 @@ package com.pitflow.mechanic;
 import com.pitflow.common.ApiException;
 import com.pitflow.mechanic.MechanicAccountRequests.Create;
 import com.pitflow.mechanic.MechanicAccountRequests.Link;
+import com.pitflow.mechanic.MechanicAccountRequests.SalaryCost;
 import com.pitflow.user.*;
+import com.pitflow.work.WorkService;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.http.HttpStatus;
@@ -18,18 +21,21 @@ public class MechanicAccountService {
   private final JdbcTemplate db;
   private final UserRepository users;
   private final PasswordEncoder passwords;
+  private final WorkService work;
 
   public MechanicAccountService(
-      JdbcTemplate db, UserRepository users, PasswordEncoder passwords) {
+      JdbcTemplate db, UserRepository users, PasswordEncoder passwords, WorkService work) {
     this.db = db;
     this.users = users;
     this.passwords = passwords;
+    this.work = work;
   }
 
   public List<MechanicAccountView> list() {
     return db.query(
         """
-        SELECT m.id,m.user_id,m.code,m.name,u.email,m.active,m.hourly_cost
+        SELECT m.id,m.user_id,m.code,m.name,u.email,m.active,m.hourly_cost,
+          m.monthly_base_salary,m.monthly_standard_hours
         FROM mechanics m LEFT JOIN users u ON u.id=m.user_id
         ORDER BY m.code
         """,
@@ -41,7 +47,13 @@ public class MechanicAccountService {
                 rs.getString("name"),
                 rs.getString("email"),
                 rs.getBoolean("active"),
-                rs.getBigDecimal("hourly_cost")));
+                rs.getBigDecimal("hourly_cost"),
+                rs.getBigDecimal("monthly_base_salary"),
+                rs.getBigDecimal("monthly_standard_hours"),
+                rs.getBigDecimal("monthly_base_salary") == null
+                    ? null
+                    : rs.getBigDecimal("monthly_base_salary")
+                        .divide(rs.getBigDecimal("monthly_standard_hours"), 0, RoundingMode.HALF_UP)));
   }
 
   @Transactional
@@ -107,15 +119,54 @@ public class MechanicAccountService {
   public MechanicAccountView setHourlyCost(UUID mechanic, BigDecimal hourlyCost) {
     var rows = db.queryForList("SELECT id FROM mechanics WHERE id=? FOR UPDATE", mechanic);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
-    db.update("UPDATE mechanics SET hourly_cost=? WHERE id=?", hourlyCost, mechanic);
+    db.update(
+        "UPDATE mechanics SET hourly_cost=?,monthly_base_salary=NULL WHERE id=?",
+        hourlyCost,
+        mechanic);
     return find(mechanic);
+  }
+
+  public Map<String, Object> setSalary(
+      String email, UUID key, UUID mechanic, SalaryCost request) {
+    return work.billingCommand(
+        email,
+        key,
+        "mechanic-salary/" + mechanic,
+        request,
+        () -> {
+          var rows = db.queryForList("SELECT id FROM mechanics WHERE id=? FOR UPDATE", mechanic);
+          if (rows.isEmpty())
+            throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
+          BigDecimal hourly =
+              request.monthlyBaseSalary() == null
+                  ? null
+                  : request
+                      .monthlyBaseSalary()
+                      .divide(request.monthlyStandardHours(), 0, RoundingMode.HALF_UP);
+          db.update(
+              "UPDATE mechanics SET monthly_base_salary=?,monthly_standard_hours=?,hourly_cost=?"
+                  + " WHERE id=?",
+              request.monthlyBaseSalary(),
+              request.monthlyStandardHours(),
+              hourly,
+              mechanic);
+          MechanicAccountView view = find(mechanic);
+          Map<String, Object> result = new LinkedHashMap<>();
+          result.put("id", view.id());
+          result.put("monthlyBaseSalary", view.monthlyBaseSalary());
+          result.put("monthlyStandardHours", view.monthlyStandardHours());
+          result.put("hourlyCost", view.hourlyCost());
+          result.put("derivedHourlyCost", view.derivedHourlyCost());
+          return result;
+        });
   }
 
   private MechanicAccountView find(UUID mechanic) {
     var rows =
         db.query(
             """
-            SELECT m.id,m.user_id,m.code,m.name,u.email,m.active,m.hourly_cost
+            SELECT m.id,m.user_id,m.code,m.name,u.email,m.active,m.hourly_cost,
+              m.monthly_base_salary,m.monthly_standard_hours
             FROM mechanics m LEFT JOIN users u ON u.id=m.user_id
             WHERE m.id=?
             """,
@@ -127,7 +178,16 @@ public class MechanicAccountService {
                     rs.getString("name"),
                     rs.getString("email"),
                     rs.getBoolean("active"),
-                    rs.getBigDecimal("hourly_cost")),
+                    rs.getBigDecimal("hourly_cost"),
+                    rs.getBigDecimal("monthly_base_salary"),
+                    rs.getBigDecimal("monthly_standard_hours"),
+                    rs.getBigDecimal("monthly_base_salary") == null
+                        ? null
+                        : rs.getBigDecimal("monthly_base_salary")
+                            .divide(
+                                rs.getBigDecimal("monthly_standard_hours"),
+                                0,
+                                RoundingMode.HALF_UP)),
             mechanic);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "정비사를 찾을 수 없습니다.");
     return rows.get(0);

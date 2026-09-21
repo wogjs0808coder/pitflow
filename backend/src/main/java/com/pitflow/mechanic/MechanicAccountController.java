@@ -2,6 +2,7 @@ package com.pitflow.mechanic;
 
 import com.pitflow.mechanic.MechanicAccountRequests.*;
 import jakarta.validation.Valid;
+import java.security.Principal;
 import java.util.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -43,5 +44,14 @@ public class MechanicAccountController {
   public MechanicAccountView setHourlyCost(
       @PathVariable UUID id, @Valid @RequestBody HourlyCost request) {
     return accounts.setHourlyCost(id, request.hourlyCost());
+  }
+
+  @PatchMapping("/{id}/salary-cost")
+  public Object setSalary(
+      Principal principal,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id,
+      @Valid @RequestBody SalaryCost request) {
+    return accounts.setSalary(principal.getName(), key, id, request);
   }
 }
