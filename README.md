@@ -4,7 +4,7 @@
 
 Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 있으며, 실제 정비소 업무 흐름을 기준으로 단계적으로 기능을 확장하고 있습니다.
 
-Phase 4 — Finance & Cost의 Phase 4A, 4B, 4C 구현과 로컬·PostgreSQL 17·production 검증까지 완료되었습니다. 과거 미확정 원가 확정, 실제 FIFO 부품원가, 완료 시점 인건비 snapshot, 급여·운영비 기반 관리 손익을 지원하며 상세 검증 결과는 `docs/VALIDATION.md`를 참고하세요.
+Phase 4 — Finance & Cost의 구현과 검증을 완료했고, Phase 5A — Treasury Core & Rebalancing을 구현했습니다. 현재 회사자산 10억원의 opening baseline, 40/30/30 계정, append-only 원장과 명시적 재조정을 지원합니다. Phase 5A의 PostgreSQL 17 검증은 실행 환경 제약으로 대기 중이며 상세 결과는 `docs/VALIDATION.md`를 참고하세요.
 
 현재 구현 단계:
 
@@ -20,6 +20,7 @@ Phase 4 — Finance & Cost의 Phase 4A, 4B, 4C 구현과 로컬·PostgreSQL 17·
 - Phase 4A — Inventory Cost Core 완료
 - Phase 4B — Finance Integration 완료
 - Phase 4C — Final Validation / Production Readiness / Documentation 완료
+- Phase 5A — Treasury Core & Rebalancing 완료 (구현 및 로컬 검증 완료, PostgreSQL 17 검증 대기)
 
 자세한 개발 순서는 `docs/ROADMAP.md`를 기준으로 합니다.
 
@@ -193,10 +194,15 @@ PC 운영 화면을 우선해 Phase 3E를 구성했습니다. 모바일에서 �
 - 정비사별 월급·기준시간에서 계산한 시간당 원가와 기간 급여 배부 분석
 - append-only 운영비·기타 손익 전표와 역분개
 - 기간 급여를 반영한 매출총이익·영업이익·세전이익·순이익 관리 지표
+- 현재 회사자산을 운영자금·은행예치·투자자산으로 분리한 Treasury 요약
+- 목표 40/30/30 비중과 현재 비중 비교, 관리자 명시적 재조정
+- 모든 Treasury 변경의 append-only 원장 기록
 
 기본 참고 월급 3,500,000원, 월 209시간, 목표 급여 비율 30%는 계획용 초기값이며 실제 급여나 외부 시세를 의미하지 않습니다. 정비사별 월급을 저장하기 전에는 급여 기반 손익을 미확정으로 표시합니다.
 
 이 화면은 현재 원가·청구·관리 입력으로 계산한 운영 분석이며 법정 손익계산서, 재무상태표 또는 현금흐름표가 아닙니다.
+
+Treasury의 10억원은 Phase 5 시작 시점의 현재 회사자산 baseline입니다. Phase 4의 과거 매출·수납·급여·비용은 이미 반영된 것으로 보며 다시 더하거나 빼지 않습니다. 향후 실제 현금 이동 연계는 Phase 5D 범위입니다.
 
 현재 수납 기능은 실제 PG 결제가 아니라 현장에서 확인한 수납 사실을 기록하는 기능입니다.
 
@@ -429,6 +435,8 @@ DB volume은 유지됩니다.
 
 Phase 4C 최종 검증 결과는 [docs/VALIDATION.md](docs/VALIDATION.md)에 기록되어 있습니다. PostgreSQL 17 전체 테스트, frontend build/typecheck, 로컬 브라우저 E2E, production smoke 및 역할별 권한 검증을 완료했습니다.
 
+Phase 5A는 H2 기반 Backend 전체 테스트 125/125와 Frontend typecheck/build 21/21을 통과했습니다. 현재 실행 환경에서 Docker CLI와 로컬 PostgreSQL 테스트 자격 증명을 사용할 수 없어 PostgreSQL 17 전체 검증은 대기 중이며, 완료 판정 전까지 완료으로 유지합니다.
+
 Phase 3E 완료 시점 기준:
 
 - Frontend `npm run typecheck` PASS
@@ -474,11 +482,11 @@ WorkOrder 작업 시작
 
 현재 최신 migration:
 
-    V20__finance_management.sql
+    V21__treasury_core.sql
 
-V17은 재고 원가 lot/allocation 원장을, V18은 정비사 시간당 원가와 WorkOrder 인건비 snapshot을, V19는 미확정 원가의 append-only 관리자 확정 이력을, V20은 정비사 월급 기준·재무 설정·append-only 운영 전표를 추가합니다.
+V17은 재고 원가 lot/allocation 원장을, V18은 정비사 시간당 원가와 WorkOrder 인건비 snapshot을, V19는 미확정 원가의 append-only 관리자 확정 이력을, V20은 정비사 월급 기준·재무 설정·append-only 운영 전표를 추가합니다. V21은 현재 Treasury 계정 3개와 opening allocation을 포함한 append-only 원장을 추가합니다.
 
-이미 적용된 V1~V19 migration은 수정하지 않았으며, 이후 스키마 변경은 새 migration으로 추가합니다.
+이미 적용된 V1~V20 migration은 수정하지 않았으며, 이후 스키마 변경은 새 migration으로 추가합니다.
 
 ## 프로젝트 구조
 
@@ -523,11 +531,17 @@ V17은 재고 원가 lot/allocation 원장을, V18은 정비사 시간당 원가
 
 ### 다음
 
-Phase 5 — Payments
+Phase 5 — Payments & Treasury
+
+- Phase 5A — Treasury Core & Rebalancing: 완료
+- Phase 5B — Daily Deposit / Investment Simulation
+- Phase 5C — Toss Payments Test Integration
+- Phase 5D — Business Cashflow Integration
+- Phase 5E — Final Finance Dashboard / Validation
 
 ### 이후
 
-- Phase 6 — Hardening / E2E / Production Readiness
+- Phase 6 — Hardening & Finalization
 
 세부 범위는 `docs/ROADMAP.md`를 기준으로 합니다.
 

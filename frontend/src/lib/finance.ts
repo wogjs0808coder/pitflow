@@ -108,3 +108,18 @@ export type FinanceEntry = {
   created_at: string;
   reversed: boolean;
 };
+
+export type TreasuryAccountType = "OPERATING" | "DEPOSIT" | "INVESTMENT";
+
+export type TreasuryAccount = {
+  balance: number;
+  target_ratio: number;
+  current_ratio: number;
+};
+
+export type TreasurySummary = {
+  total_assets: number;
+  accounts: Record<TreasuryAccountType, TreasuryAccount>;
+  last_updated_at: string;
+  can_rebalance: boolean;
+};

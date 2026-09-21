@@ -685,6 +685,54 @@ footer {
 .finance-kpis {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+.treasury-card {
+  width: min(560px, 52vw);
+  flex-shrink: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: white;
+  box-shadow: var(--shadow);
+}
+.treasury-card > span,
+.treasury-total {
+  display: block;
+}
+.treasury-card > span:not(.eyebrow) {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.treasury-total {
+  margin-top: 2px;
+  font-size: clamp(1.5rem, 2.4vw, 2.2rem);
+}
+.treasury-accounts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+.treasury-accounts > div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 9px;
+  background: #f4f7f5;
+}
+.treasury-accounts span,
+.treasury-accounts strong,
+.treasury-accounts small {
+  display: block;
+}
+.treasury-accounts span,
+.treasury-accounts small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.treasury-accounts strong {
+  margin: 3px 0;
+  font-size: 0.92rem;
+}
 .finance-management-section {
   margin-top: 20px;
 }
@@ -786,6 +834,13 @@ footer {
   color: var(--ink);
 }
 @media (max-width: 1000px) {
+  .page-heading:has(.treasury-card) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .treasury-card {
+    width: 100%;
+  }
   .finance-kpis,
   .finance-management-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -795,6 +850,9 @@ footer {
   }
 }
 @media (max-width: 620px) {
+  .treasury-accounts {
+    grid-template-columns: 1fr;
+  }
   .finance-kpis,
   .finance-management-summary,
   .finance-entry-form {

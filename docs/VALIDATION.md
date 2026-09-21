@@ -290,3 +290,49 @@ Phase 4 — Finance & Cost: 완료.
 다음 구현 단계:
 
 Phase 5 — Payments.
+
+## Phase 5A — Treasury Core & Rebalancing 검증 기록 (2026-09-21, Asia/Seoul)
+
+현재 판정: 진행 중. 구현 및 로컬 검증은 완료했으나 PostgreSQL 17 전체 검증이 남아 있어 완료로 기록하지 않는다.
+
+| 검사 | 결과 |
+| --- | --- |
+| Phase 5A 집중 테스트 | PASS — 6/6, 실패 0, 오류 0, 건너뜀 0 |
+| H2 기반 Backend 전체 `verify` | PASS — 125/125, 실패 0, 오류 0, 건너뜀 0 |
+| Frontend `npm run typecheck` | PASS |
+| Frontend production build | PASS — 정적 페이지 21/21 |
+| PostgreSQL 17 `compose.test.yaml` 전체 Backend 검증 | 미실행 — 현재 실행 환경에서 Docker CLI를 찾을 수 없음 |
+| 로컬 PostgreSQL 18 대체 검증 | 미실행 — 서비스는 실행 중이나 테스트 전용 접속 자격 증명을 사용할 수 없음 |
+
+검증한 범위:
+
+- V20에서 V21로의 migration, 계정 3개와 10억원 opening allocation, migration 재실행 안전성
+- 초기 잔액 4억원/3억원/3억원과 목표 비중 40/30/30
+- opening 원장과 현재 잔액 정합성, 음수 잔액 DB 제약
+- ADMIN 조회, CUSTOMER/MECHANIC 차단, mutation CSRF 및 Idempotency-Key 요구
+- 재조정 총자산 보존, 목표 금액과 remainder, event group delta 합계 0, `balance_after` 정합성
+- 동일 키 replay, 이미 균형인 상태의 no-op, 서로 다른 키의 동시 요청 직렬화
+- 중간 DB 오류 시 계정·원장·멱등 기록 전체 rollback
+
+Phase 4 Finance 계산과 기존 수납·reversal 동작은 변경하지 않았다. V1–V20 migration도 수정하지 않았다. PostgreSQL 17 전체 검증이 통과하면 Phase 5A 완료 판정을 갱신한다.
+
+### Phase 5A 최종 검증
+
+Phase 5A — Treasury Core & Rebalancing: 완료.
+
+최종 검증 결과:
+
+- Backend Maven verify: PASS — 125/125, 실패 0, 오류 0, 건너뜀 0
+- PostgreSQL 17 `compose.test.yaml`: PASS — 125/125, 실패 0, 오류 0, 건너뜀 0
+- Frontend TypeScript typecheck: PASS
+- Frontend production build: PASS — 21/21 routes
+- `git diff --check`: PASS
+- 로컬 브라우저 `/admin/finance` smoke: PASS
+- 현재 회사자산 1,000,000,000원 확인
+- OPERATING 400,000,000원 / 40% 확인
+- DEPOSIT 300,000,000원 / 30% 확인
+- INVESTMENT 300,000,000원 / 30% 확인
+- 초기 목표 비중과 현재 비중이 동일하여 `목표 비중으로 재조정` 버튼 비활성화 확인
+- 기존 Phase 4 Finance 화면 및 계산 회귀 없음 확인
+
+Phase 5B에서 은행예치 일복리와 투자자산 일일 수익률 시뮬레이션을 추가한다.

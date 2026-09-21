@@ -10,7 +10,7 @@
 - Phase 4B — Finance Integration: 완료
 - Phase 4C — Final Validation / Production Readiness / Documentation: 완료
 - Phase 4 — Finance & Cost: 완료
-- 현재 단계: Phase 5 — Payments
+- 현재 단계: Phase 5A — Treasury Core & Rebalancing 완료
 
 이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
 `docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
@@ -138,28 +138,42 @@ Phase 4C는 2026-09-21 기준 완료했다.
 
 ---
 
-## Phase 5 — Payments
+## Phase 5 — Payments & Treasury
 
-목표:
-현재 내부 수납 기록에 실제 PG 결제를 연결한다.
+### 5A — Treasury Core & Rebalancing 진행 중
 
-주요 범위:
+- Phase 5 시작 시점 현재 회사자산 1,000,000,000원 opening baseline
+- OPERATING / DEPOSIT / INVESTMENT 현재 잔액과 목표 40/30/30 비중
+- append-only Treasury 원장과 관리자 명시적 재조정
+- deterministic row lock, 총자산 보존, Idempotency-Key 및 rollback 검증
+- 관리자 Finance 화면 Treasury summary card
+- 로컬 Backend 125/125 및 Frontend typecheck/build 통과
+- PostgreSQL 17 전체 검증 대기; 통과 전까지 완료로 기록하지 않음
 
-- 결제 승인
-- 취소
-- 환불
-- webhook
-- 중복 webhook 방지
-- 결제 idempotency
-- PG transaction ID
-- 실패 복구
-- reconciliation
+### 5B — Daily Deposit / Investment Simulation
 
-초기에는 전액 결제 / 전액 취소를 우선한다.
+- 은행예치 일복리와 투자자산 일별 수익률 확정
+- 날짜별 중복 방지, catch-up, 일별 원장
+
+### 5C — Toss Payments Test Integration
+
+- Toss Payments test 결제 승인·취소·환불
+- server-side confirm, webhook deduplication, idempotency, reconciliation
+
+### 5D — Business Cashflow Integration
+
+- 고객 결제·환불과 실제 운영비·급여 지급을 OPERATING에 연결
+- Phase 4 관리 손익과 실제 cash movement의 중복 반영 방지
+
+### 5E — Final Finance Dashboard / Validation
+
+- Finance와 Treasury 통합 표시 및 최종 재무 경계 검증
 
 ---
 
-## Phase 6 — Hardening / E2E / Production Readiness
+## Phase 6 — Hardening & Finalization
+
+새로운 핵심 비즈니스 기능을 추가하지 않고 전체 안정화와 마무리를 수행한다.
 
 주요 범위:
 
@@ -172,6 +186,8 @@ Phase 4C는 2026-09-21 기준 완료했다.
 - backup / restore
 - logging
 - production smoke test
+- 모바일 반응형 보완
+- 코드 정리
 - 최종 문서
 - 포트폴리오 자료 정리
 
@@ -179,5 +195,5 @@ Phase 4C는 2026-09-21 기준 완료했다.
 
 ## 현재 이후 구현 순서
 
-Phase 5
+Phase 5A → Phase 5B → Phase 5C → Phase 5D → Phase 5E
 → Phase 6

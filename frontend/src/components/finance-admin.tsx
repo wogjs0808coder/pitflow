@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { api, errorText, won } from "@/lib/api";
-import { FinanceEntry, FinanceSettings, FinanceSummary, FinanceWork } from "@/lib/finance";
+import { FinanceEntry, FinanceSettings, FinanceSummary, FinanceWork, TreasuryAccountType, TreasurySummary } from "@/lib/finance";
 import { localTime } from "@/lib/work";
 import { useWorkCommand } from "./work-command";
 
@@ -29,6 +29,11 @@ const ENTRY_CATEGORIES = [
   ["OTHER_OPERATING", "기타 운영비"], ["OTHER_INCOME", "기타 수익"],
 ] as const;
 const categoryName = (category: string) => ENTRY_CATEGORIES.find(([value]) => value === category)?.[1] ?? category;
+const TREASURY_ACCOUNTS: [TreasuryAccountType, string][] = [
+  ["OPERATING", "운영자금"],
+  ["DEPOSIT", "은행예치"],
+  ["INVESTMENT", "투자자산"],
+];
 
 export function FinanceAdmin() {
   const { user } = useAuth();
@@ -39,6 +44,7 @@ export function FinanceAdmin() {
   const [works, setWorks] = useState<FinanceWork[]>([]);
   const [settings, setSettings] = useState<FinanceSettings | null>(null);
   const [entries, setEntries] = useState<FinanceEntry[]>([]);
+  const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
   const [selected, setSelected] = useState<FinanceWork | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -52,16 +58,18 @@ export function FinanceAdmin() {
     setError("");
     try {
       const query = `from=${period.from}&to=${period.to}`;
-      const [nextSummary, nextWorks, nextSettings, nextEntries] = await Promise.all([
+      const [nextSummary, nextWorks, nextSettings, nextEntries, nextTreasury] = await Promise.all([
         api<FinanceSummary>(`/api/admin/finance/summary?${query}`),
         api<FinanceWork[]>(`/api/admin/finance/work-orders?${query}`),
         api<FinanceSettings>("/api/admin/finance/settings"),
         api<FinanceEntry[]>(`/api/admin/finance/entries?${query}`),
+        api<TreasurySummary>("/api/admin/finance/treasury"),
       ]);
       setSummary(nextSummary);
       setWorks(nextWorks);
       setSettings(nextSettings);
       setEntries(nextEntries);
+      setTreasury(nextTreasury);
       setSelected((current) => nextWorks.find((work) => work.id === current?.id) ?? null);
     } catch (reason) {
       setError(errorText(reason));
@@ -133,6 +141,32 @@ export function FinanceAdmin() {
           <h1>재무·원가 분석</h1>
           <p>발행 명세 매출과 완료 시점 인건비, 실제 FIFO 부품원가를 함께 확인합니다.</p>
         </div>
+        {treasury && (
+          <section className="treasury-card" aria-label="현재 회사자산">
+            <span className="eyebrow">TREASURY</span>
+            <span>현재 회사자산</span>
+            <strong className="treasury-total">{won(treasury.total_assets)}</strong>
+            <div className="treasury-accounts">
+              {TREASURY_ACCOUNTS.map(([type, label]) => {
+                const account = treasury.accounts[type];
+                return (
+                  <div key={type}>
+                    <span>{label}</span>
+                    <strong>{won(account.balance)}</strong>
+                    <small>현재 {percent(account.current_ratio)} / 목표 {percent(account.target_ratio)}</small>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              className="button secondary"
+              disabled={command.blocked || !treasury.can_rebalance}
+              onClick={() => void command.run("/api/admin/finance/treasury/rebalance", {})}
+            >
+              목표 비중으로 재조정
+            </button>
+          </section>
+        )}
       </div>
       {error && <div className="error" role="alert">{error}</div>}
       <form className="billing-period" onSubmit={submit}>
