@@ -138,3 +138,27 @@ availability는 `date`, `policy`, `closed`, `durationMinutes`, `totalLaborPrice`
 급여 입력의 `monthlyBaseSalary`는 null 또는 0 이상, `monthlyStandardHours`는 0보다 커야 합니다. 계산 시간당 원가는 월급을 기준시간으로 나눠 원 단위 반올림하며 이후 완료 작업에만 snapshot됩니다. 재무 설정의 기본값은 계획 참고값으로, 정비사 급여를 자동 입력하지 않습니다. 전표 category는 서버 enum으로 제한되며 음수 금액은 허용하지 않습니다. 취소는 기존 행을 변경하지 않고 reversal 행을 추가합니다.
 
 운영비 category는 `RENT` 임차료, `UTILITIES` 공과금, `INSURANCE` 보험료, `SOFTWARE` 소프트웨어, `SHOP_SUPPLIES` 소모품, `EQUIPMENT_MAINTENANCE` 장비 유지비, `CARD_FEES` 결제 수수료, `DEPRECIATION` 감가상각, `OTHER_OPERATING` 기타 영업비입니다. `OTHER_INCOME`은 기타수익, `INTEREST`는 이자비용, `TAX`는 세금으로 각각 영업이익 이후에 반영합니다. 급여·부품원가는 이 전표에 중복 입력하지 않습니다.
+
+## Phase 5A Treasury
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/admin/finance/treasury` | 현재 회사자산, 계정별 잔액·현재/목표 비중, 최종 갱신 시각 조회 |
+| POST | `/admin/finance/treasury/rebalance` | 현재 총자산을 보존하며 목표 40/30/30 금액으로 재조정 |
+
+두 API는 ADMIN 전용입니다. POST는 CSRF와 UUID 형식의 `Idempotency-Key`가 필요하며 요청 body는 비어 있습니다. CUSTOMER와 MECHANIC 접근은 서버에서 거절합니다.
+
+```json
+{
+  "total_assets": 1000000000,
+  "accounts": {
+    "OPERATING": { "balance": 400000000, "target_ratio": 40.0, "current_ratio": 40.0 },
+    "DEPOSIT": { "balance": 300000000, "target_ratio": 30.0, "current_ratio": 30.0 },
+    "INVESTMENT": { "balance": 300000000, "target_ratio": 30.0, "current_ratio": 30.0 }
+  },
+  "last_updated_at": "2026-09-21T00:00:00Z",
+  "can_rebalance": false
+}
+```
+
+이미 목표 금액이면 POST는 성공 응답을 반환하되 REBALANCE 원장을 추가하지 않습니다. 재조정 시 같은 논리 거래의 계정별 변경은 하나의 `event_group_id`로 묶이며 delta 합계는 0입니다.

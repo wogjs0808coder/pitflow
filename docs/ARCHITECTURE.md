@@ -70,3 +70,11 @@ V17의 FIFO lot/allocation과 V18의 인건비 snapshot은 자동 원가의 원�
 V20은 정비사별 월급과 기준시간으로 향후 WorkOrder snapshot에 사용할 시간당 원가를 계산합니다. 이미 완료된 WorkOrder snapshot은 급여 변경 후에도 보존됩니다. 기간 급여는 조회 시점에 활성인 정비사의 현재 월급을 달력 일수로 안분한 관리 추정치입니다. 입·퇴사일과 급여 변경 이력은 아직 보관하지 않으므로 과거 법정 급여대장이나 회계 원장을 대체하지 않습니다. 월급이 없는 활성 정비사가 있으면 급여와 이에 의존하는 손익을 UNKNOWN으로 유지하며, 0원은 명시적으로 확인된 값입니다.
 
 작업별 기여이익은 WorkOrder 완료 시점의 배부 인건비와 부품원가를 사용합니다. 기간 관리 손익은 매출에서 부품원가와 기간 급여를 차감한 매출총이익을 출발점으로 운영비, 기타수익, 이자, 세금을 순서대로 반영합니다. 따라서 작업별 배부 인건비는 분석 지표이며 기간 손익에서 급여와 중복 차감하지 않습니다. `finance_entries`는 원행을 수정·삭제하지 않고 반대 부호의 reversal 행을 추가합니다. 기본 월급·시간·목표 급여율은 계획 참고값일 뿐 정비사 실제 급여를 자동 생성하지 않습니다.
+
+## Treasury
+
+V21의 `treasury_accounts`는 OPERATING, DEPOSIT, INVESTMENT 세 계정의 현재 잔액과 목표 비중을 보관하고, `treasury_ledger`는 opening allocation과 이후 변경을 append-only 감사 이력으로 남깁니다. 초기 1,000,000,000원은 Phase 5 시작 시점의 현재 회사자산 baseline이며 Phase 4 이전 손익·수납·비용을 다시 반영하지 않습니다.
+
+재조정은 ADMIN이 명시적으로 요청할 때만 실행합니다. 기존 durable command/idempotency transaction 안에서 세 계정을 `account_type` 순으로 `FOR UPDATE` 잠금하고, OPERATING과 DEPOSIT을 원 단위 `HALF_UP`으로 계산한 뒤 INVESTMENT에 remainder를 배정합니다. 계정 갱신과 같은 `event_group_id`의 원장 3건은 한 transaction에서 커밋되며 delta 합계와 총자산은 0 및 기존 총액을 유지합니다. 이미 목표 금액이면 원장을 만들지 않는 safe no-op입니다.
+
+Phase 4 Finance는 관리 손익·원가 분석이고 Phase 5 Treasury는 현재 운용 자산입니다. V21은 기존 매출, 현장 수납, 급여, 운영비를 Treasury에 자동 반영하지 않습니다. 향후 실제 cash movement 연결은 Phase 5D에서 별도 거래로 구현합니다.
