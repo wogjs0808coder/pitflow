@@ -3,6 +3,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, errorText, won } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { useWorkCommand } from "@/components/work-command";
+import { TreasurySummary } from "@/lib/finance";
 import {
   Part,
   Mechanic,
@@ -19,6 +20,7 @@ export default function PartsPage() {
   const [stockFilter, setStockFilter] = useState("all");
   const [parts, setParts] = useState<Part[]>([]);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
+  const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
   const [selected, setSelected] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [history, setHistory] = useState<Movement[]>([]);
@@ -40,11 +42,13 @@ export default function PartsPage() {
         signal: c.signal,
       }),
       api<Mechanic[]>("/api/admin/mechanics", { signal: c.signal }),
+      api<TreasurySummary>("/api/admin/finance/treasury", { signal: c.signal }),
     ])
-      .then(([p, m]) => {
+      .then(([p, m, t]) => {
         if (!c.signal.aborted) {
           setParts(p);
           setMechanics(m);
+          setTreasury(t);
         }
       })
       .catch((e) => {
@@ -139,6 +143,60 @@ export default function PartsPage() {
         </button>
       </div>
       <div hidden={tab !== "parts"}>
+        {treasury && (
+          <section className="work-panel treasury-inventory-section">
+            <div>
+              <span className="eyebrow">INVENTORY ASSETS</span>
+              <h2>재고자산 현황</h2>
+            </div>
+            <div className="treasury-managed-summary">
+              <span>
+                확정 재고자산 총액
+                <strong>{won(treasury.inventory.known_value)}</strong>
+              </span>
+              <span>
+                원가 미확정 재고 품목 수
+                <strong>{treasury.inventory.unknown_part_count.toLocaleString("ko-KR")}개</strong>
+              </span>
+              <span>
+                원가 미확정 재고 수량
+                <strong>{treasury.inventory.unknown_quantity.toLocaleString("ko-KR")}개</strong>
+              </span>
+            </div>
+            {treasury.inventory.unknown_part_count > 0 && (
+              <p className="finance-warning">
+                원가 미확정 재고 {treasury.inventory.unknown_part_count.toLocaleString("ko-KR")}개 품목 / {treasury.inventory.unknown_quantity.toLocaleString("ko-KR")}개
+              </p>
+            )}
+            <div className="finance-table-wrap">
+              <table className="finance-table">
+                <thead>
+                  <tr>
+                    <th>부품</th>
+                    <th>현재 수량</th>
+                    <th>확정 원가 수량</th>
+                    <th>확정 자산가치</th>
+                    <th>미확정 수량</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {treasury.inventory.items.map((item) => (
+                    <tr key={item.part_id}>
+                      <td><strong>{item.name}</strong><span>{item.sku}</span></td>
+                      <td>{item.on_hand_quantity.toLocaleString("ko-KR")} {item.unit}</td>
+                      <td>{item.known_quantity.toLocaleString("ko-KR")} {item.unit}</td>
+                      <td>{won(item.known_asset_value)}</td>
+                      <td>{item.unknown_quantity.toLocaleString("ko-KR")} {item.unit}</td>
+                    </tr>
+                  ))}
+                  {!treasury.inventory.items.length && (
+                    <tr><td colSpan={5}>현재 재고자산이 없습니다.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
         <div className="management-toolbar">
           <label>
             부품 검색
@@ -546,6 +604,8 @@ export default function PartsPage() {
                         />
                         <span className="field-help">
                           0원은 확인된 0원이며, 미입력은 UNKNOWN으로 기록됩니다.
+                          매입단가를 입력한 신규 입고는 운영자금에서 자동 차감됩니다.
+                          미입력 입고는 금융자산에 반영되지 않습니다.
                         </span>
                       </label>
                       <button className="button primary">입고 기록</button>

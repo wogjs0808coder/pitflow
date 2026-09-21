@@ -707,6 +707,25 @@ footer {
   margin-top: 2px;
   font-size: clamp(1.5rem, 2.4vw, 2.2rem);
 }
+.treasury-managed-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.treasury-managed-summary span,
+.treasury-managed-summary strong {
+  display: block;
+}
+.treasury-managed-summary span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.treasury-managed-summary strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
 .treasury-accounts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -732,6 +751,44 @@ footer {
 .treasury-accounts strong {
   margin: 3px 0;
   font-size: 0.92rem;
+}
+.treasury-simulation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.treasury-payroll {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.treasury-payroll summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.treasury-payroll form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.treasury-payroll label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.78rem;
+}
+.treasury-payroll label:nth-child(3),
+.treasury-payroll .button {
+  grid-column: 1 / -1;
+}
+.treasury-payroll .button {
+  justify-self: start;
+}
+.treasury-inventory-section {
+  margin-bottom: 20px;
 }
 .finance-management-section {
   margin-top: 20px;
@@ -814,6 +871,17 @@ footer {
 .finance-entry-description {
   grid-column: 1 / -1;
 }
+.finance-entry-form .finance-cash-toggle {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+}
+.finance-cash-toggle input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+}
 .finance-entry-form .button,
 .finance-settings-form .button {
   justify-self: start;
@@ -850,7 +918,11 @@ footer {
   }
 }
 @media (max-width: 620px) {
+  .treasury-managed-summary,
   .treasury-accounts {
+    grid-template-columns: 1fr;
+  }
+  .treasury-payroll form {
     grid-template-columns: 1fr;
   }
   .finance-kpis,

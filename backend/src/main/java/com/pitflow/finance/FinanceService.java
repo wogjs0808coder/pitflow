@@ -24,11 +24,14 @@ public class FinanceService {
   private final JdbcTemplate db;
   private final WorkService work;
   private final Clock clock;
+  private final TreasuryMutationService treasury;
 
-  public FinanceService(JdbcTemplate db, WorkService work, Clock clock) {
+  public FinanceService(
+      JdbcTemplate db, WorkService work, Clock clock, TreasuryMutationService treasury) {
     this.db = db;
     this.work = work;
     this.clock = clock;
+    this.treasury = treasury;
   }
 
   private UUID admin(String email) {
@@ -586,7 +589,13 @@ public class FinanceService {
     UUID actor = admin(email);
     period(request.entryDate(), request.entryDate());
     Entry normalized =
-        new Entry(request.entryDate(), request.category(), request.amount(), request.description().strip());
+        new Entry(
+            request.entryDate(),
+            request.category(),
+            request.amount(),
+            request.description().strip(),
+            request.category() != FinanceRequests.EntryCategory.DEPRECIATION
+                && Boolean.TRUE.equals(request.affectsTreasury()));
     return work.billingCommand(
         email,
         key,
@@ -596,15 +605,25 @@ public class FinanceService {
           UUID id = UUID.randomUUID();
           db.update(
               "INSERT INTO finance_entries"
-                  + " (id,entry_date,category,amount,description,entry_kind,original_entry_id,created_by,created_at)"
-                  + " VALUES (?,?,?,?,?,'ENTRY',NULL,?,?)",
+                  + " (id,entry_date,category,amount,description,entry_kind,original_entry_id,"
+                  + "created_by,created_at,affects_treasury)"
+                  + " VALUES (?,?,?,?,?,'ENTRY',NULL,?,?,?)",
               id,
               normalized.entryDate(),
               normalized.category().name(),
               normalized.amount(),
               normalized.description(),
               actor,
-              clock.instant().atOffset(ZoneOffset.UTC));
+              clock.instant().atOffset(ZoneOffset.UTC),
+              normalized.affectsTreasury());
+          applyEntryCash(
+              id,
+              normalized.category().name(),
+              normalized.amount(),
+              normalized.affectsTreasury(),
+              false,
+              actor,
+              normalized.description());
           return rows("SELECT * FROM finance_entries WHERE id=?", id).get(0);
         });
   }
@@ -635,8 +654,9 @@ public class FinanceService {
           UUID reversal = UUID.randomUUID();
           db.update(
               "INSERT INTO finance_entries"
-                  + " (id,entry_date,category,amount,description,entry_kind,original_entry_id,created_by,created_at)"
-                  + " VALUES (?,?,?,?,?,'REVERSAL',?,?,?)",
+                  + " (id,entry_date,category,amount,description,entry_kind,original_entry_id,"
+                  + "created_by,created_at,affects_treasury)"
+                  + " VALUES (?,?,?,?,?,'REVERSAL',?,?,?,?)",
               reversal,
               original.get("entry_date"),
               original.get("category"),
@@ -644,8 +664,38 @@ public class FinanceService {
               normalized.reason(),
               entryId,
               actor,
-              clock.instant().atOffset(ZoneOffset.UTC));
+              clock.instant().atOffset(ZoneOffset.UTC),
+              original.get("affects_treasury"));
+          applyEntryCash(
+              reversal,
+              original.get("category").toString(),
+              number(original.get("amount")),
+              Boolean.TRUE.equals(original.get("affects_treasury")),
+              true,
+              actor,
+              normalized.reason());
           return rows("SELECT * FROM finance_entries WHERE id=?", reversal).get(0);
         });
+  }
+
+  private void applyEntryCash(
+      UUID entryId,
+      String category,
+      BigDecimal amount,
+      boolean affectsTreasury,
+      boolean reversal,
+      UUID actor,
+      String reason) {
+    if (!affectsTreasury || "DEPRECIATION".equals(category)) return;
+    boolean income = "OTHER_INCOME".equals(category);
+    BigDecimal delta = income ? amount : amount.negate();
+    if (reversal) delta = delta.negate();
+    treasury.changeOperating(
+        delta,
+        income ? "OPERATING_INCOME" : "OPERATING_EXPENSE",
+        (reversal ? "운영 전표 역분개: " : "운영 전표: ") + reason,
+        "FINANCE_ENTRY",
+        entryId,
+        actor);
   }
 }

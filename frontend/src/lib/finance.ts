@@ -107,6 +107,7 @@ export type FinanceEntry = {
   created_by_name: string;
   created_at: string;
   reversed: boolean;
+  affects_treasury: boolean;
 };
 
 export type TreasuryAccountType = "OPERATING" | "DEPOSIT" | "INVESTMENT";
@@ -117,9 +118,42 @@ export type TreasuryAccount = {
   current_ratio: number;
 };
 
+export type TreasuryInventoryItem = {
+  part_id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  on_hand_quantity: number;
+  known_quantity: number;
+  known_asset_value: number;
+  unknown_quantity: number;
+  has_unknown_cost: boolean;
+};
+
+export type TreasuryInventory = {
+  known_value: number;
+  unknown_quantity: number;
+  unknown_part_count: number;
+  items: TreasuryInventoryItem[];
+};
+
+export type TreasurySimulation = {
+  annual_deposit_rate: number;
+  last_settlement_date: string | null;
+  last_deposit_interest: number | null;
+  last_investment_return_rate: number | null;
+  last_investment_return_amount: number | null;
+};
+
 export type TreasurySummary = {
   total_assets: number;
+  financial_assets_total: number;
+  managed_assets_known_total: number;
+  managed_assets_fully_known: boolean;
+  inventory: TreasuryInventory;
+  receivables: number;
   accounts: Record<TreasuryAccountType, TreasuryAccount>;
+  simulation: TreasurySimulation;
   last_updated_at: string;
   can_rebalance: boolean;
 };

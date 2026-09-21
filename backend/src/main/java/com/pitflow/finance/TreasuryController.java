@@ -1,5 +1,7 @@
 package com.pitflow.finance;
 
+import com.pitflow.finance.TreasuryRequests.PayrollPayment;
+import jakarta.validation.Valid;
 import java.security.Principal;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,5 +28,13 @@ public class TreasuryController {
   public Object rebalance(
       Principal principal, @RequestHeader("Idempotency-Key") UUID key) {
     return treasury.rebalance(principal.getName(), key);
+  }
+
+  @PostMapping("/payroll-payment")
+  public Object payrollPayment(
+      Principal principal,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @Valid @org.springframework.web.bind.annotation.RequestBody PayrollPayment request) {
+    return treasury.payrollPayment(principal.getName(), key, request);
   }
 }
