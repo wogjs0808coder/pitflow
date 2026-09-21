@@ -10,4 +10,7 @@ public record MechanicAccountView(
     String name,
     String email,
     boolean active,
-    BigDecimal hourlyCost) {}
+    BigDecimal hourlyCost,
+    BigDecimal monthlyBaseSalary,
+    BigDecimal monthlyStandardHours,
+    BigDecimal derivedHourlyCost) {}

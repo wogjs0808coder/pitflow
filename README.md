@@ -4,7 +4,7 @@
 
 Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 있으며, 실제 정비소 업무 흐름을 기준으로 단계적으로 기능을 확장하고 있습니다.
 
-현재 Phase 3 — Admin Operations & Notifications까지 구현 및 주요 회귀 검증이 완료되었습니다. 다음 구현 단계는 Phase 4 — Finance & Cost입니다.
+Phase 4A Inventory Cost Core와 Phase 4B Finance Integration 구현이 완료되었습니다. Phase 4C는 과거 미확정 원가의 수동 확정·정정, 급여·운영비 기반 관리 손익 확장과 최종 검증을 진행 중이며, 상세 결과는 `docs/VALIDATION.md`를 참고하세요.
 
 현재 구현 단계:
 
@@ -17,6 +17,9 @@ Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 �
 - Phase 3D — Item-level Workflow 완료
 - Phase 3E — Admin Workspace / UX Integration 완료
 - Phase 3 — Admin Operations & Notifications 완료
+- Phase 4A — Inventory Cost Core 완료
+- Phase 4B — Finance Integration 완료
+- Phase 4C — Final Validation 진행 중 (필수 검증 미완료)
 
 자세한 개발 순서는 `docs/ROADMAP.md`를 기준으로 합니다.
 
@@ -177,6 +180,23 @@ PC 운영 화면을 우선해 Phase 3E를 구성했습니다. 모바일에서 �
 - invoice 취소
 - invoice 재발행
 - Idempotency-Key 기반 중복 요청 방지
+
+### 재무 및 원가
+
+- 고객 청구 판매가와 실제 부품 매입원가 분리
+- 입고 lot 및 FIFO 사용·반환 원가 추적
+- 완료 시점 정비사 인건비 snapshot
+- 매출·총원가·기여이익 조회
+- 근거가 없는 과거 원가는 0원으로 추정하지 않고 미확정으로 표시
+- 관리자가 전표·정비기록을 확인한 뒤 미확정 원가를 수동 확정하거나 정정
+- 자동 원가와 수동 확정 원가를 구분하고 이전 정정 이력을 보존
+- 정비사별 월급·기준시간에서 계산한 시간당 원가와 기간 급여 배부 분석
+- append-only 운영비·기타 손익 전표와 역분개
+- 기간 급여를 반영한 매출총이익·영업이익·세전이익·순이익 관리 지표
+
+기본 참고 월급 3,500,000원, 월 209시간, 목표 급여 비율 30%는 계획용 초기값이며 실제 급여나 외부 시세를 의미하지 않습니다. 정비사별 월급을 저장하기 전에는 급여 기반 손익을 미확정으로 표시합니다.
+
+이 화면은 현재 원가·청구·관리 입력으로 계산한 운영 분석이며 법정 손익계산서, 재무상태표 또는 현금흐름표가 아닙니다.
 
 현재 수납 기능은 실제 PG 결제가 아니라 현장에서 확인한 수납 사실을 기록하는 기능입니다.
 
@@ -407,6 +427,8 @@ DB volume은 유지됩니다.
 
 ## 현재 검증 상태
 
+Phase 4C 검증 실행 결과 및 미완료 항목은 [docs/VALIDATION.md](docs/VALIDATION.md)에 기록합니다. 이전 Phase 3E 검증 기록은 당시 결과이며 Phase 4 검증을 대신하지 않습니다.
+
 Phase 3E 완료 시점 기준:
 
 - Frontend `npm run typecheck` PASS
@@ -452,11 +474,11 @@ WorkOrder 작업 시작
 
 현재 최신 migration:
 
-    V16__work_order_item_status.sql
+    V20__finance_management.sql
 
-Phase 3D에서 V16 migration으로 WorkOrderItem 상태와 건너뜀 사유를 추가했습니다.
+V17은 재고 원가 lot/allocation 원장을, V18은 정비사 시간당 원가와 WorkOrder 인건비 snapshot을, V19는 미확정 원가의 append-only 관리자 확정 이력을, V20은 정비사 월급 기준·재무 설정·append-only 운영 전표를 추가합니다.
 
-기존 V1~V16 migration은 수정하지 않습니다.
+이미 적용된 V1~V19 migration은 수정하지 않았으며, 이후 스키마 변경은 새 migration으로 추가합니다.
 
 ## 프로젝트 구조
 
@@ -497,7 +519,7 @@ Phase 3D에서 V16 migration으로 WorkOrderItem 상태와 건너뜀 사유를 �
 
 ### 다음
 
-Phase 4 — Finance & Cost
+Phase 4C — Final Validation (PostgreSQL·frontend·브라우저/운영 검증 통과 후 완료 처리)
 
 ### 이후
 

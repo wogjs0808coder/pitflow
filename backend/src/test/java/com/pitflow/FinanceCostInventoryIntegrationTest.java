@@ -15,7 +15,9 @@ import com.pitflow.vehicle.Vehicle;
 import com.pitflow.vehicle.VehicleRepository;
 import com.pitflow.vehicle.VehicleRequest;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -81,6 +83,12 @@ class FinanceCostInventoryIntegrationTest {
 
   @AfterEach
   void clean() {
+    db.update("DELETE FROM finance_entries");
+    db.update(
+        "UPDATE finance_settings SET default_monthly_base_salary=3500000,"
+            + "default_monthly_standard_hours=209,target_payroll_ratio=30.00,"
+            + "updated_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=1");
+    db.update("DELETE FROM work_order_cost_resolutions");
     db.update("DELETE FROM notifications");
     db.update("DELETE FROM part_shortage_reports");
     db.update("DELETE FROM payment_records WHERE kind='REVERSAL'");
@@ -561,6 +569,19 @@ class FinanceCostInventoryIntegrationTest {
     db.update("UPDATE parts SET unit='L' WHERE id=?", part);
     receipt(part, "1", "10000", UUID.randomUUID());
     receipt(part, "1", "20000", UUID.randomUUID());
+    var financeLots =
+        db.queryForList(
+            "SELECT id,purchase_unit_cost FROM inventory_cost_lots WHERE part_id=? ORDER BY purchase_unit_cost",
+            part);
+    OffsetDateTime fifoStart = OffsetDateTime.parse("2026-09-21T00:00:00Z");
+    db.update(
+        "UPDATE inventory_cost_lots SET received_at=? WHERE id=?",
+        fifoStart,
+        financeLots.get(0).get("id"));
+    db.update(
+        "UPDATE inventory_cost_lots SET received_at=? WHERE id=?",
+        fifoStart.plusSeconds(1),
+        financeLots.get(1).get("id"));
     UUID use =
         UUID.fromString(
             use(work, part, "2", UUID.randomUUID()).get("movements").get(0).get("id").asText());
@@ -568,6 +589,28 @@ class FinanceCostInventoryIntegrationTest {
         "POST",
         "/api/admin/work-orders/" + work + "/parts/return",
         Map.of("originalUseId", use, "quantity", "0.5", "reason", "부분 반환"));
+    var restore =
+        db.queryForMap(
+            "SELECT quantity,purchase_unit_cost,source_allocation_id FROM inventory_cost_allocations"
+                + " WHERE allocation_type='RESTORE' AND movement_id IN"
+                + " (SELECT id FROM stock_movements WHERE original_use_id=?)",
+            use);
+    assertThat(new BigDecimal(restore.get("quantity").toString())).isEqualByComparingTo("0.5");
+    assertThat(new BigDecimal(restore.get("purchase_unit_cost").toString()))
+        .isEqualByComparingTo("20000");
+    assertThat(restore.get("source_allocation_id")).isNotNull();
+    assertThat(
+            db.queryForObject(
+                "SELECT remaining_quantity FROM inventory_cost_lots WHERE part_id=? AND purchase_unit_cost=10000",
+                BigDecimal.class,
+                part))
+        .isEqualByComparingTo("0");
+    assertThat(
+            db.queryForObject(
+                "SELECT remaining_quantity FROM inventory_cost_lots WHERE part_id=? AND purchase_unit_cost=20000",
+                BigDecimal.class,
+                part))
+        .isEqualByComparingTo("0.5");
     UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, work);
     ok("PATCH", "/api/admin/work-orders/" + work + "/items/" + item, Map.of("done", true));
 
@@ -755,7 +798,16 @@ class FinanceCostInventoryIntegrationTest {
             "labor_minutes_snapshot",
             "labor_hourly_cost_snapshot",
             "labor_cost_snapshot",
-            "labor_cost_known")) {
+            "labor_cost_known",
+            "automatic_parts_cost_known",
+            "manual_unresolved_parts_cost",
+            "parts_cost_manually_resolved",
+            "automatic_labor_cost",
+            "manual_labor_cost",
+            "labor_cost_manually_resolved",
+            "cost_resolution_reason",
+            "cost_resolution_at",
+            "cost_resolution_by")) {
       assertThat(customerList.get(0).has(field))
           .as("customer list must hide %s", field)
           .isFalse();
@@ -785,5 +837,401 @@ class FinanceCostInventoryIntegrationTest {
                 .getResponse()
                 .getStatus())
         .isEqualTo(403);
+  }
+
+  @Test
+  void manualUnknownCostsAreResolvedAndLatestCorrectionsRemainAppendOnly() throws Exception {
+    UUID work = work(appointment);
+    UUID knownPart = part("COST-RESOLVE-KNOWN");
+    UUID unknownPart = part("COST-RESOLVE-UNKNOWN");
+    receipt(knownPart, "1", "20000", UUID.randomUUID());
+    receipt(unknownPart, "2", null, UUID.randomUUID());
+    use(work, knownPart, "1", UUID.randomUUID());
+    UUID unknownUse =
+        UUID.fromString(
+            use(work, unknownPart, "2", UUID.randomUUID()).get("movements").get(0).get("id").asText());
+    ok(
+        "POST",
+        "/api/admin/work-orders/" + work + "/parts/return",
+        Map.of("originalUseId", unknownUse, "quantity", "0.5", "reason", "부분 반환"));
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, work);
+    ok("PATCH", "/api/admin/work-orders/" + work + "/items/" + item, Map.of("done", true));
+    db.update("UPDATE work_orders SET labor_cost_known=FALSE,labor_hourly_cost_snapshot=NULL,labor_cost_snapshot=NULL WHERE id=?", work);
+    ok("PATCH", "/api/admin/work-orders/" + work + "/status", Map.of("status", "COMPLETED"));
+
+    JsonNode initial = read("/api/admin/finance/work-orders/" + work);
+    assertThat(initial.get("automatic_parts_cost_known").decimalValue()).isEqualByComparingTo("20000");
+    assertThat(initial.get("unknown_parts_quantity").decimalValue()).isEqualByComparingTo("1.5");
+    assertThat(initial.get("has_unknown_parts_cost").asBoolean()).isTrue();
+    assertThat(initial.get("has_unknown_labor_cost").asBoolean()).isTrue();
+
+    UUID firstKey = UUID.randomUUID();
+    JsonNode partsOnly =
+        ok(
+            "POST",
+            "/api/admin/finance/work-orders/" + work + "/cost-resolution",
+            Map.of("unresolvedPartsCost", 45000, "reason", " 과거 매입전표 확인 "),
+            firstKey);
+    assertThat(
+            ok(
+                "POST",
+                "/api/admin/finance/work-orders/" + work + "/cost-resolution",
+                Map.of("unresolvedPartsCost", 45000, "reason", " 과거 매입전표 확인 "),
+                firstKey))
+        .isEqualTo(partsOnly);
+    assertThat(partsOnly.get("parts_cost").decimalValue()).isEqualByComparingTo("65000");
+    assertThat(partsOnly.get("parts_cost_manually_resolved").asBoolean()).isTrue();
+    assertThat(partsOnly.get("has_unknown_labor_cost").asBoolean()).isTrue();
+    assertThat(partsOnly.get("total_cost").isNull()).isTrue();
+
+    JsonNode both =
+        ok(
+            "POST",
+            "/api/admin/finance/work-orders/" + work + "/cost-resolution",
+            Map.of("laborCost", 30000, "reason", "정비기록 확인"));
+    assertThat(both.get("manual_unresolved_parts_cost").decimalValue()).isEqualByComparingTo("45000");
+    assertThat(both.get("manual_labor_cost").decimalValue()).isEqualByComparingTo("30000");
+    assertThat(both.get("total_cost").decimalValue()).isEqualByComparingTo("95000");
+    assertThat(both.get("contribution_margin").decimalValue()).isEqualByComparingTo("-95000");
+
+    JsonNode corrected =
+        ok(
+            "POST",
+            "/api/admin/finance/work-orders/" + work + "/cost-resolution",
+            Map.of("unresolvedPartsCost", 50000, "laborCost", 35000, "reason", "기록 재확인"));
+    assertThat(corrected.get("parts_cost").decimalValue()).isEqualByComparingTo("70000");
+    assertThat(corrected.get("labor_cost").decimalValue()).isEqualByComparingTo("35000");
+    assertThat(corrected.get("total_cost").decimalValue()).isEqualByComparingTo("105000");
+    assertThat(db.queryForObject("SELECT COUNT(*) FROM work_order_cost_resolutions WHERE work_order_id=?", Integer.class, work)).isEqualTo(3);
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM work_order_cost_resolutions"
+                    + " WHERE work_order_id=? AND unresolved_parts_cost=45000",
+                Integer.class,
+                work))
+        .isOne();
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM work_order_cost_resolutions"
+                    + " WHERE work_order_id=? AND labor_cost=30000",
+                Integer.class,
+                work))
+        .isOne();
+
+    JsonNode zero =
+        ok(
+            "POST",
+            "/api/admin/finance/work-orders/" + work + "/cost-resolution",
+            Map.of("laborCost", 0, "reason", "무상 작업 확인"));
+    assertThat(zero.get("labor_cost").decimalValue()).isEqualByComparingTo("0");
+    assertThat(zero.get("has_unknown_labor_cost").asBoolean()).isFalse();
+
+    ok(
+        "POST",
+        "/api/admin/work-orders/" + work + "/parts/return",
+        Map.of("originalUseId", unknownUse, "quantity", "1.5", "reason", "전체 반환"));
+    JsonNode restored = read("/api/admin/finance/work-orders/" + work);
+    assertThat(restored.get("unknown_parts_quantity").decimalValue()).isEqualByComparingTo("0");
+    assertThat(restored.get("has_unknown_parts_cost").asBoolean()).isFalse();
+    assertThat(restored.get("parts_cost_manually_resolved").asBoolean()).isFalse();
+    assertThat(restored.get("parts_cost").decimalValue()).isEqualByComparingTo("20000");
+
+    UUID laborOnlyWork = work(appointment("2026-09-21T09:00:00Z"));
+    UUID laborOnlyPart = part("COST-LABOR-ONLY");
+    receipt(laborOnlyPart, "1", null, UUID.randomUUID());
+    use(laborOnlyWork, laborOnlyPart, "1", UUID.randomUUID());
+    UUID laborOnlyItem =
+        db.queryForObject(
+            "SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, laborOnlyWork);
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + laborOnlyWork + "/items/" + laborOnlyItem,
+        Map.of("done", true));
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + laborOnlyWork + "/status",
+        Map.of("status", "COMPLETED"));
+    JsonNode laborOnly =
+        ok(
+            "POST",
+            "/api/admin/finance/work-orders/" + laborOnlyWork + "/cost-resolution",
+            Map.of("laborCost", 10000, "reason", "인건비만 확인"));
+    assertThat(laborOnly.get("has_unknown_parts_cost").asBoolean()).isTrue();
+    assertThat(laborOnly.get("has_unknown_labor_cost").asBoolean()).isFalse();
+    assertThat(laborOnly.get("total_cost").isNull()).isTrue();
+    assertThat(laborOnly.get("contribution_margin").isNull()).isTrue();
+  }
+
+  @Test
+  void resolutionValidationAuthorizationAndAutomaticKnownCostsAreProtected() throws Exception {
+    UUID unfinished = work(appointment);
+    String path = "/api/admin/finance/work-orders/" + unfinished + "/cost-resolution";
+    assertThat(request("POST", path, Map.of("laborCost", 1, "reason", "확인"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(409);
+    assertThat(request("POST", "/api/admin/finance/work-orders/" + UUID.randomUUID() + "/cost-resolution", Map.of("laborCost", 1, "reason", "확인"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(404);
+    assertThat(request("POST", path, Map.of("laborCost", -1, "reason", "확인"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(400);
+    assertThat(request("POST", path, Map.of("reason", "확인"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(400);
+    assertThat(request("POST", path, Map.of("laborCost", 1, "reason", "   "), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(400);
+
+    ok("PATCH", "/api/admin/mechanic-accounts/" + mechanic + "/hourly-cost", Map.of("hourlyCost", 120000));
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, unfinished);
+    ok("PATCH", "/api/admin/work-orders/" + unfinished + "/items/" + item, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + unfinished + "/status", Map.of("status", "COMPLETED"));
+    assertThat(request("POST", path, Map.of("laborCost", 1, "reason", "덮어쓰기 시도"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(409);
+    assertThat(request("POST", path, Map.of("unresolvedPartsCost", 1, "reason", "대상 없음"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(409);
+
+    for (String role : List.of("CUSTOMER", "MECHANIC")) {
+      MvcResult result =
+          mvc.perform(
+                  post(path)
+                      .with(user("blocked@example.com").roles(role))
+                      .with(csrf())
+                      .header("Idempotency-Key", UUID.randomUUID())
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content(json.writeValueAsString(Map.of("laborCost", 1, "reason", "차단"))))
+              .andReturn();
+      assertThat(result.getResponse().getStatus()).isEqualTo(403);
+    }
+  }
+
+  @Test
+  void financeDefaultsAndSalaryDerivationPreserveCompletedSnapshots() throws Exception {
+    LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+    JsonNode defaults = read("/api/admin/finance/summary");
+    assertThat(defaults.get("from").asText()).isEqualTo(today.withDayOfMonth(1).toString());
+    assertThat(defaults.get("to").asText()).isEqualTo(today.toString());
+    assertThat(defaults.get("payroll_unknown").asBoolean()).isTrue();
+    assertThat(defaults.get("gross_profit").isNull()).isTrue();
+    assertThat(read("/api/admin/finance/work-orders").isArray()).isTrue();
+
+    JsonNode explicit =
+        read("/api/admin/finance/summary?from=2026-08-01&to=2026-08-31");
+    assertThat(explicit.get("from").asText()).isEqualTo("2026-08-01");
+    assertThat(explicit.get("to").asText()).isEqualTo("2026-08-31");
+
+    JsonNode salary =
+        ok(
+            "PATCH",
+            "/api/admin/mechanic-accounts/" + mechanic + "/salary-cost",
+            Map.of("monthlyBaseSalary", 3500000, "monthlyStandardHours", 209));
+    assertThat(salary.get("derivedHourlyCost").decimalValue()).isEqualByComparingTo("16746");
+    assertThat(
+            db.queryForObject(
+                "SELECT hourly_cost FROM mechanics WHERE id=?", BigDecimal.class, mechanic))
+        .isEqualByComparingTo("16746");
+
+    UUID first = work(appointment);
+    UUID firstItem =
+        db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, first);
+    ok("PATCH", "/api/admin/work-orders/" + first + "/items/" + firstItem, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + first + "/status", Map.of("status", "COMPLETED"));
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_hourly_cost_snapshot FROM work_orders WHERE id=?",
+                BigDecimal.class,
+                first))
+        .isEqualByComparingTo("16746");
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_cost_snapshot FROM work_orders WHERE id=?", BigDecimal.class, first))
+        .isEqualByComparingTo("8373");
+
+    ok(
+        "PATCH",
+        "/api/admin/mechanic-accounts/" + mechanic + "/salary-cost",
+        Map.of("monthlyBaseSalary", 4180000, "monthlyStandardHours", 209));
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_hourly_cost_snapshot FROM work_orders WHERE id=?",
+                BigDecimal.class,
+                first))
+        .isEqualByComparingTo("16746");
+    UUID future = work(appointment("2026-09-21T11:00:00Z"));
+    UUID futureItem =
+        db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, future);
+    ok("PATCH", "/api/admin/work-orders/" + future + "/items/" + futureItem, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + future + "/status", Map.of("status", "COMPLETED"));
+    assertThat(
+            db.queryForObject(
+                "SELECT labor_hourly_cost_snapshot FROM work_orders WHERE id=?",
+                BigDecimal.class,
+                future))
+        .isEqualByComparingTo("20000");
+  }
+
+  @Test
+  void payrollProrationAndAllocationVarianceUseCalendarDays() throws Exception {
+    ok(
+        "PATCH",
+        "/api/admin/mechanic-accounts/" + mechanic + "/salary-cost",
+        Map.of("monthlyBaseSalary", 3000000, "monthlyStandardHours", 209));
+    JsonNode full = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(full.get("period_payroll_expense").decimalValue()).isEqualByComparingTo("3000000");
+    assertThat(full.get("labor_allocation_variance").decimalValue()).isEqualByComparingTo("3000000");
+    assertThat(full.get("standard_available_hours").decimalValue()).isEqualByComparingTo("209");
+    JsonNode partial = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-15");
+    assertThat(partial.get("period_payroll_expense").decimalValue()).isEqualByComparingTo("1500000");
+    JsonNode multi = read("/api/admin/finance/summary?from=2026-08-16&to=2026-09-15");
+    assertThat(multi.get("period_payroll_expense").decimalValue()).isEqualByComparingTo("3048387");
+
+    ok(
+        "PATCH",
+        "/api/admin/mechanic-accounts/" + mechanic + "/salary-cost",
+        Map.of("monthlyBaseSalary", 0, "monthlyStandardHours", 209));
+    UUID work = work(appointment);
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, work);
+    ok("PATCH", "/api/admin/work-orders/" + work + "/items/" + item, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + work + "/status", Map.of("status", "COMPLETED"));
+    db.update(
+        "UPDATE work_orders SET labor_cost_known=TRUE,labor_hourly_cost_snapshot=2000,"
+            + "labor_cost_snapshot=1000 WHERE id=?",
+        work);
+    JsonNode over = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(over.get("period_payroll_expense").decimalValue()).isEqualByComparingTo("0");
+    assertThat(over.get("payroll_unknown").asBoolean()).isFalse();
+    assertThat(over.get("labor_allocation_variance").decimalValue()).isEqualByComparingTo("-1000");
+  }
+
+  @Test
+  void manuallyResolvedLaborCostKeepsHistoricalLaborMinutesUnknown() throws Exception {
+    ok(
+        "PATCH",
+        "/api/admin/mechanic-accounts/" + mechanic + "/salary-cost",
+        Map.of("monthlyBaseSalary", 3500000, "monthlyStandardHours", 209));
+    JsonNode noCompletedWork =
+        read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(noCompletedWork.get("completed_labor_hours").decimalValue())
+        .isEqualByComparingTo("0");
+    assertThat(noCompletedWork.get("labor_utilization_rate").decimalValue())
+        .isEqualByComparingTo("0");
+
+    UUID historical = work(appointment);
+    UUID item =
+        db.queryForObject(
+            "SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, historical);
+    ok("PATCH", "/api/admin/work-orders/" + historical + "/items/" + item, Map.of("done", true));
+    ok(
+        "PATCH",
+        "/api/admin/work-orders/" + historical + "/status",
+        Map.of("status", "COMPLETED"));
+    db.update(
+        "UPDATE work_orders SET labor_minutes_snapshot=NULL,labor_hourly_cost_snapshot=NULL,"
+            + "labor_cost_snapshot=NULL,labor_cost_known=FALSE WHERE id=?",
+        historical);
+    ok(
+        "POST",
+        "/api/admin/finance/work-orders/" + historical + "/cost-resolution",
+        Map.of("laborCost", 20000, "reason", "과거 정비기록에서 금액만 확인"));
+
+    JsonNode summary =
+        read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(summary.get("allocated_labor_cost").decimalValue()).isEqualByComparingTo("20000");
+    assertThat(summary.get("labor_allocation_variance").decimalValue())
+        .isEqualByComparingTo("3480000");
+    assertThat(summary.get("completed_labor_hours").isNull()).isTrue();
+    assertThat(summary.get("labor_utilization_rate").isNull()).isTrue();
+    JsonNode mechanicSummary = summary.get("mechanics").get(0);
+    assertThat(mechanicSummary.get("allocated_labor_cost").decimalValue())
+        .isEqualByComparingTo("20000");
+    assertThat(mechanicSummary.get("allocated_minutes").isNull()).isTrue();
+  }
+
+  @Test
+  void managementProfitAndExpenseLedgerRemainAdminOnlyAndUnknownSafe() throws Exception {
+    ok(
+        "PATCH",
+        "/api/admin/mechanic-accounts/" + mechanic + "/salary-cost",
+        Map.of("monthlyBaseSalary", 0, "monthlyStandardHours", 209));
+    UUID work = work(appointment);
+    UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, work);
+    ok("PATCH", "/api/admin/work-orders/" + work + "/items/" + item, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + work + "/status", Map.of("status", "COMPLETED"));
+    JsonNode quote = read("/api/admin/billing/work-orders/" + work + "/preview");
+    ok(
+        "POST",
+        "/api/admin/billing/work-orders/" + work + "/invoices",
+        Map.of("expectedFingerprint", quote.get("fingerprint").asText(), "confirmZeroPrices", true));
+
+    JsonNode rent =
+        ok(
+            "POST",
+            "/api/admin/finance/entries",
+            Map.of(
+                "entryDate", "2026-09-21",
+                "category", "RENT",
+                "amount", 1000,
+                "description", "9월 임차료"));
+    ok("POST", "/api/admin/finance/entries", Map.of("entryDate", "2026-09-21", "category", "OTHER_INCOME", "amount", 200, "description", "기타 수익"));
+    ok("POST", "/api/admin/finance/entries", Map.of("entryDate", "2026-09-21", "category", "INTEREST", "amount", 100, "description", "이자"));
+    ok("POST", "/api/admin/finance/entries", Map.of("entryDate", "2026-09-21", "category", "TAX", "amount", 50, "description", "세금"));
+
+    JsonNode summary = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(summary.get("revenue").decimalValue()).isEqualByComparingTo("20000");
+    assertThat(summary.get("gross_profit").decimalValue()).isEqualByComparingTo("20000");
+    assertThat(summary.get("operating_expenses").decimalValue()).isEqualByComparingTo("1000");
+    assertThat(summary.get("operating_profit").decimalValue()).isEqualByComparingTo("19000");
+    assertThat(summary.get("pre_tax_profit").decimalValue()).isEqualByComparingTo("19100");
+    assertThat(summary.get("net_profit").decimalValue()).isEqualByComparingTo("19050");
+    assertThat(summary.get("payroll_ratio").decimalValue()).isEqualByComparingTo("0");
+    assertThat(summary.get("target_payroll_ratio").decimalValue()).isEqualByComparingTo("30");
+
+    JsonNode settings =
+        ok(
+            "PATCH",
+            "/api/admin/finance/settings",
+            Map.of(
+                "defaultMonthlyBaseSalary", 3600000,
+                "defaultMonthlyStandardHours", 200,
+                "targetPayrollRatio", 25));
+    assertThat(settings.get("default_monthly_base_salary").decimalValue())
+        .isEqualByComparingTo("3600000");
+    assertThat(settings.get("target_payroll_ratio").decimalValue()).isEqualByComparingTo("25");
+    assertThat(read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30")
+            .get("target_payroll_ratio").decimalValue())
+        .isEqualByComparingTo("25");
+    JsonNode entries = read("/api/admin/finance/entries?from=2026-09-01&to=2026-09-30");
+    assertThat(entries.size()).isEqualTo(4);
+    assertThat(entries.get(0).get("reversed").asBoolean()).isFalse();
+
+    assertThat(request("POST", "/api/admin/finance/entries", Map.of("entryDate", "2026-09-21", "category", "RENT", "amount", -1, "description", "오류"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(400);
+    assertThat(request("POST", "/api/admin/finance/entries", Map.of("entryDate", "2026-09-21", "category", "UNKNOWN", "amount", 1, "description", "오류"), UUID.randomUUID()).getResponse().getStatus()).isEqualTo(400);
+    for (String role : List.of("CUSTOMER", "MECHANIC")) {
+      assertThat(
+              mvc.perform(
+                      post("/api/admin/finance/entries")
+                          .with(user("blocked@example.com").roles(role))
+                          .with(csrf())
+                          .header("Idempotency-Key", UUID.randomUUID())
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content(json.writeValueAsString(Map.of("entryDate", "2026-09-21", "category", "RENT", "amount", 1, "description", "차단"))))
+                  .andReturn()
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(403);
+    }
+
+    ok(
+        "POST",
+        "/api/admin/finance/entries/" + rent.get("id").asText() + "/reversal",
+        Map.of("reason", "잘못 입력하여 취소"));
+    assertThat(read("/api/admin/finance/entries?from=2026-09-01&to=2026-09-30")
+            .findValues("reversed").stream().anyMatch(JsonNode::asBoolean))
+        .isTrue();
+    JsonNode reversed = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(reversed.get("operating_expenses").decimalValue()).isEqualByComparingTo("0");
+
+    UUID unknownWork = work(appointment("2026-09-21T13:00:00Z"));
+    UUID unknownPart = part("COST-PNL-UNKNOWN");
+    receipt(unknownPart, "1", null, UUID.randomUUID());
+    use(unknownWork, unknownPart, "1", UUID.randomUUID());
+    UUID unknownItem =
+        db.queryForObject(
+            "SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, unknownWork);
+    ok("PATCH", "/api/admin/work-orders/" + unknownWork + "/items/" + unknownItem, Map.of("done", true));
+    ok("PATCH", "/api/admin/work-orders/" + unknownWork + "/status", Map.of("status", "COMPLETED"));
+    JsonNode unknown = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(unknown.get("gross_profit").isNull()).isTrue();
+    assertThat(unknown.get("operating_profit").isNull()).isTrue();
+    assertThat(unknown.get("pre_tax_profit").isNull()).isTrue();
+    assertThat(unknown.get("net_profit").isNull()).isTrue();
   }
 }

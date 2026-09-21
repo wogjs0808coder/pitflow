@@ -3,6 +3,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, errorText } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { useWorkCommand } from "@/components/work-command";
+import { FinanceSettings } from "@/lib/finance";
 
 type MechanicAccount = {
   id: string;
@@ -12,23 +14,34 @@ type MechanicAccount = {
   email: string | null;
   active: boolean;
   hourlyCost: number | null;
+  monthlyBaseSalary: number | null;
+  monthlyStandardHours: number;
+  derivedHourlyCost: number | null;
 };
 
 export default function MechanicsPage() {
   const { user } = useAuth();
   const [mechanics, setMechanics] = useState<MechanicAccount[]>([]);
   const [error, setError] = useState("");
+  const [settings, setSettings] = useState<FinanceSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
-  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  const reload = useCallback(async () => setRevision((value) => value + 1), []);
+  const command = useWorkCommand(reload);
 
   useEffect(() => {
     if (user?.role !== "ADMIN") return;
     const controller = new AbortController();
-    api<MechanicAccount[]>("/api/admin/mechanic-accounts", {
-      signal: controller.signal,
-    })
-      .then((value) => !controller.signal.aborted && setMechanics(value))
+    Promise.all([
+      api<MechanicAccount[]>("/api/admin/mechanic-accounts", { signal: controller.signal }),
+      api<FinanceSettings>("/api/admin/finance/settings", { signal: controller.signal }),
+    ])
+      .then(([value, reference]) => {
+        if (!controller.signal.aborted) {
+          setMechanics(value);
+          setSettings(reference);
+        }
+      })
       .catch((reason) => !controller.signal.aborted && setError(errorText(reason)));
     return () => controller.abort();
   }, [user?.role, revision]);
@@ -93,6 +106,22 @@ export default function MechanicsPage() {
           <h2>{mechanic.code} · {mechanic.name}</h2>
           <p>{mechanic.active ? "활성" : "비활성"} · {mechanic.accountId ? `계정 연결됨 (${mechanic.email})` : "로그인 계정 미연결"}</p>
           <p>시간당 원가: {mechanic.hourlyCost === null ? "미확정" : `${mechanic.hourlyCost.toLocaleString("ko-KR")}원`}</p>
+          <p>{mechanic.monthlyBaseSalary === null ? "기존 시간당 원가 방식" : `월급 기준 · ${mechanic.monthlyBaseSalary.toLocaleString("ko-KR")}원 / ${mechanic.monthlyStandardHours}시간 · 계산 시간당 ${mechanic.derivedHourlyCost?.toLocaleString("ko-KR")}원`}</p>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            const data = new FormData(event.currentTarget);
+            void command.run(`/api/admin/mechanic-accounts/${mechanic.id}/salary-cost`, {
+              monthlyBaseSalary: data.get("monthlyBaseSalary") === "" ? null : Number(data.get("monthlyBaseSalary")),
+              monthlyStandardHours: Number(data.get("monthlyStandardHours")),
+            }, "PATCH");
+          }}>
+            <fieldset disabled={busy || command.blocked}>
+              <label>기준 월급 (원)<input name="monthlyBaseSalary" type="number" min="0" step="1" defaultValue={mechanic.monthlyBaseSalary ?? ""} placeholder={`참고 ${settings?.default_monthly_base_salary?.toLocaleString("ko-KR") ?? "3,500,000"}원`} /></label>
+              <label>기준 월 근로시간<input name="monthlyStandardHours" type="number" min="0.01" step="0.01" required defaultValue={mechanic.monthlyStandardHours ?? settings?.default_monthly_standard_hours ?? 209} /></label>
+              <span className="field-help">참고값은 계획 편의를 위한 값이며 저장 전에는 실제 급여로 사용되지 않습니다.</span>
+              <button className="button secondary">월급 기준 저장</button>
+            </fieldset>
+          </form>
           <form onSubmit={(event) => void submit(event, `/api/admin/mechanic-accounts/${mechanic.id}/hourly-cost`, (data) => ({
             hourlyCost: data.get("hourlyCost") === "" ? null : data.get("hourlyCost"),
           }), "PATCH")}>
@@ -124,6 +153,7 @@ export default function MechanicsPage() {
         </article>
       ))}
       {!mechanics.length && !error && <p className="empty-state">등록된 정비사가 없습니다.</p>}
+      {command.feedback}
     </>
   );
 }
