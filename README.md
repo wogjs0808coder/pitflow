@@ -4,7 +4,7 @@
 
 Spring Boot + PostgreSQL 백엔드와 Next.js 프론트엔드로 구성되어 있으며, 실제 정비소 업무 흐름을 기준으로 단계적으로 기능을 확장하고 있습니다.
 
-Phase 4A Inventory Cost Core와 Phase 4B Finance Integration 구현이 완료되었습니다. Phase 4C는 과거 미확정 원가의 수동 확정·정정, 급여·운영비 기반 관리 손익 확장과 최종 검증을 진행 중이며, 상세 결과는 `docs/VALIDATION.md`를 참고하세요.
+Phase 4 — Finance & Cost의 Phase 4A, 4B, 4C 구현과 로컬·PostgreSQL 17·production 검증까지 완료되었습니다. 과거 미확정 원가 확정, 실제 FIFO 부품원가, 완료 시점 인건비 snapshot, 급여·운영비 기반 관리 손익을 지원하며 상세 검증 결과는 `docs/VALIDATION.md`를 참고하세요.
 
 현재 구현 단계:
 
@@ -19,7 +19,7 @@ Phase 4A Inventory Cost Core와 Phase 4B Finance Integration 구현이 완료되
 - Phase 3 — Admin Operations & Notifications 완료
 - Phase 4A — Inventory Cost Core 완료
 - Phase 4B — Finance Integration 완료
-- Phase 4C — Final Validation 진행 중 (필수 검증 미완료)
+- Phase 4C — Final Validation / Production Readiness / Documentation 완료
 
 자세한 개발 순서는 `docs/ROADMAP.md`를 기준으로 합니다.
 
@@ -427,7 +427,7 @@ DB volume은 유지됩니다.
 
 ## 현재 검증 상태
 
-Phase 4C 검증 실행 결과 및 미완료 항목은 [docs/VALIDATION.md](docs/VALIDATION.md)에 기록합니다. 이전 Phase 3E 검증 기록은 당시 결과이며 Phase 4 검증을 대신하지 않습니다.
+Phase 4C 최종 검증 결과는 [docs/VALIDATION.md](docs/VALIDATION.md)에 기록되어 있습니다. PostgreSQL 17 전체 테스트, frontend build/typecheck, 로컬 브라우저 E2E, production smoke 및 역할별 권한 검증을 완료했습니다.
 
 Phase 3E 완료 시점 기준:
 
@@ -516,14 +516,17 @@ V17은 재고 원가 lot/allocation 원장을, V18은 정비사 시간당 원가
 - Phase 3D — Item-level Workflow
 - Phase 3E — Admin Workspace / UX Integration
 - Phase 3 — Admin Operations & Notifications
+- Phase 4A — Inventory Cost Core
+- Phase 4B — Finance Integration
+- Phase 4C — Final Validation / Production Readiness / Documentation
+- Phase 4 — Finance & Cost
 
 ### 다음
 
-Phase 4C — Final Validation (PostgreSQL·frontend·브라우저/운영 검증 통과 후 완료 처리)
+Phase 5 — Payments
 
 ### 이후
 
-- Phase 5 — Payments
 - Phase 6 — Hardening / E2E / Production Readiness
 
 세부 범위는 `docs/ROADMAP.md`를 기준으로 합니다.

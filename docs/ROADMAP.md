@@ -8,7 +8,9 @@
 - Phase 3 — Admin Operations & Notifications: 완료
 - Phase 4A — Inventory Cost Core: 완료
 - Phase 4B — Finance Integration: 완료
-- 현재 단계: Phase 4C — Final Validation / Production Readiness / Documentation (검증 미완료)
+- Phase 4C — Final Validation / Production Readiness / Documentation: 완료
+- Phase 4 — Finance & Cost: 완료
+- 현재 단계: Phase 5 — Payments
 
 이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
 `docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
@@ -114,7 +116,7 @@ Phase 4B 완료 범위:
 - UNKNOWN 원가를 확정 이익으로 계산하지 않는 관리자 Finance API/UI
 - 입고 매입단가와 정비사 원가 관리 UI
 
-### Phase 4C — Final Validation / Production Readiness / Documentation (진행 중)
+### Phase 4C — Final Validation / Production Readiness / Documentation 완료
 
 - 과거 UNKNOWN 부품·인건비 원가의 관리자 수동 확정 및 append-only 정정 이력
 - 자동 원가와 수동 확정 원가를 구분하는 Finance API/UI
@@ -128,7 +130,11 @@ Phase 4B 완료 범위:
 - production readiness 경계와 미검증 항목 문서화
 - 검증 결과는 `docs/VALIDATION.md`에 기록
 
-Phase 4C는 필수 로컬 자동 검증과 수동 확인 항목이 완료되기 전까지 완료로 표시하지 않는다. production 동작을 직접 확인할 수 없으면 `MANUAL PRODUCTION CHECK REQUIRED`로 명시한다.
+Phase 4C는 2026-09-21 기준 완료했다.
+
+최종 검증에서 PostgreSQL 17 전체 테스트 119/119, frontend typecheck 및 production build 21/21, 로컬 브라우저 E2E, production Vercel/Render/Neon smoke, ADMIN/MECHANIC/CUSTOMER 권한 분리를 확인했다.
+
+법정 재무제표가 아닌 관리 손익·원가 분석이라는 제품 경계와 현재 급여 이력 모델의 한계는 유지하며, 실제 PG 결제 연동은 Phase 5에서 진행한다.
 
 ---
 
@@ -173,6 +179,5 @@ Phase 4C는 필수 로컬 자동 검증과 수동 확인 항목이 완료되기 
 
 ## 현재 이후 구현 순서
 
-Phase 4
-→ Phase 5
+Phase 5
 → Phase 6
