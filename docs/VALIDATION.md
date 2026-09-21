@@ -96,56 +96,197 @@
 - 모바일 환경은 고밀도 관리자·정비사 화면의 배치와 사용성이 충분하지 않아 추가 반응형 개선이 필요하다. 이 항목은 Phase 6 Hardening / Production Readiness 범위로 이관한다.
 - Phase 3E에서는 Backend 회귀 테스트를 새로 요구하는 기능 변경이 없었으며, 기존 Phase 3D Backend / DB 검증 기준을 유지한다.
 
-## Phase 4C — Final Validation (2026-09-21, Asia/Seoul)
+## Phase 4C — Final Validation 완료 (2026-09-21, Asia/Seoul)
 
-상태: **진행 중 / 미완료**. H2 전체 회귀와 frontend 검증은 통과했지만 V19·V20을 포함한 PostgreSQL 17 및 브라우저·운영 검증이 남아 있어 Phase 4C PASS로 판정하지 않는다.
+상태: 완료 / PASS.
 
-기준 저장소 상태:
+Phase 4A Inventory Cost Core, Phase 4B Finance Integration에 이어 V19 과거 미확정 원가 확정과 V20 재무 관리 확장, 로컬·PostgreSQL 17·production 검증까지 완료했다.
 
-- Branch: `feat/phase4-final-validation`
-- HEAD / main baseline: `b58a6d08b69db321dadb0823e5e2375cc7446f11` (`feat: add finance integration (#22)`)
-- 검증 시작 시 working tree clean.
-- V17 `inventory_cost_lots` / `inventory_cost_allocations`, V18 `mechanics.hourly_cost` 및 WorkOrder labor snapshot 확인. V1–V19 migration은 수정하지 않았다.
-- V19 `work_order_cost_resolutions` 추가: 미확정 부품 원가/인건비의 append-only 관리자 확정·정정 이력.
-- V20 정비사 월급·기준시간, singleton 재무 참고 설정, append-only 운영비·기타 손익 전표 및 reversal 추가.
-- Docker CLI 및 Docker Desktop 실행 파일을 찾지 못해 `compose.test.yaml`의 PostgreSQL 17 실행 불가.
+기준 저장소:
 
-| 검사 | 결과 | 근거 |
-|---|---|---|
-| `docker compose -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from backend-tests backend-tests` | 미실행 | Docker CLI 없음 |
-| 재무·원가 집중 테스트 | PASS | `FinanceCostInventoryIntegrationTest`, `FinanceCostResolutionMigrationTest`, `FinanceManagementMigrationTest`: 17 tests, 실패·오류 0 |
-| Backend Maven `verify` | PASS (H2) | 20 test classes; 119 tests, 실패·오류·건너뜀 0, BUILD SUCCESS |
-| Frontend `npm ci` | PASS | 28 packages, 취약점 보고 0. 기존 Luna cache 산출물 제거 후 정상 설치 |
-| Frontend `npm run typecheck` | PASS | TypeScript 오류 0 |
-| Frontend `npm run build` | PASS | Next.js 16.3.4 production build, static generation 21/21 |
-| Browser / local E2E | 미실행 | 이 작업에서 브라우저 E2E 수행 불가 |
-| Production smoke / Vercel, Render, Neon | 미검증 — **MANUAL PRODUCTION CHECK REQUIRED** | 운영 환경 변경·금융 흐름을 직접 확인하지 않음 |
-| `git diff --check` | PASS | 구현·테스트·문서 전체 diff 확인 |
+- Phase 4C feature branch: `feat/phase4-final-validation`
+- PR: #23
+- Phase 4C merge commit: `9970108`
+- V19: `work_order_cost_resolutions`
+- V20: 정비사 월급·기준시간, finance settings, append-only 운영 전표/reversal
+- 기존 적용 migration은 수정하지 않고 V19, V20을 append-only migration으로 추가했다.
 
-H2 FIFO 불일치 원인: production FIFO/RETURN 계산이 아니라 테스트의 timestamp 설정이 비결정적이었다. `1 × 10,000` lot과 `1 × 20,000` lot을 FIFO로 소비한 뒤 0.5를 반환하면 반환은 마지막 소비 allocation인 20,000원 lot부터 복원하므로 순원가는 `10,000 + (0.5 × 20,000) = 20,000`이다. 두 receipt가 H2 timestamp 정밀도에서 같은 `received_at`으로 저장되면 UUID tie-breaker가 lot 순서를 바꿀 수 있어 이전 실행에서 10,000원 lot 0.5가 복원되고 25,000원이 나타났다. 테스트가 두 lot의 `received_at`을 명시적으로 다르게 설정하고 RESTORE의 `source_allocation_id`, 단가 20,000, 수량 0.5 및 lot 잔량을 검증하도록 수정했다. 같은 집중 테스트와 전체 suite가 재통과했다.
+### 최종 자동 검증
 
-보안 코드/회귀 테스트 검토: `/api/admin/**`은 ADMIN 전용이고 수동 확정 API도 서비스에서 ADMIN을 재검사하며 CSRF와 `Idempotency-Key`를 사용한다. 미완료·미존재 작업, 음수·빈 사유·all-null 요청, 자동 확정 인건비 덮어쓰기를 거절한다. 고객 및 정비사 WorkOrder list/detail 네 경로에서 V18 snapshot 및 V19 finance 필드 비노출을 검증했다. 주문·invoice snapshot과 기존 판매가 계산은 변경하지 않았다.
+| 검사 | 결과 |
+|---|---|
+| PostgreSQL 17 `compose.test.yaml` 전체 Backend 검증 | PASS — 119/119, 실패 0, 오류 0, 건너뜀 0 |
+| Backend Maven verify | PASS |
+| Frontend TypeScript typecheck | PASS |
+| Frontend production build | PASS — 21/21 |
+| `git diff --check` | PASS |
+| V1–V20 migration 정합성 | PASS |
+| V17 FIFO / RETURN 회귀 | PASS |
+| V18 labor snapshot 회귀 | PASS |
+| V19 manual cost resolution 회귀 | PASS |
+| V20 finance management 회귀 | PASS |
 
-수동 확정 계산 검증: 자동 확인 부품원가는 보존하고 미확정 부품의 수동 값만 더한다. 자동 인건비 snapshot이 있으면 수동 값으로 대체할 수 없다. 자동 UNKNOWN에 대해서만 최신 non-null 수동 값이 유효하며, 0원도 KNOWN으로 처리한다. 한 구성요소만 정정하면 다른 구성요소의 이전 최신값을 유지하고, 이전 행은 삭제·수정하지 않는다. UNKNOWN 부품이 전부 반환되면 수동값 없이 자동으로 known 상태가 되며 부분 반환 잔량은 계속 UNKNOWN이다.
+### 로컬 브라우저 E2E
 
-재무 관리 확장 검증: Asia/Seoul 당월 기본 기간, 월급/기준시간의 원 단위 시간당 원가 계산, 기존 완료 snapshot 보존, 월 전체·부분·다월 달력 일수 안분, null/0 급여 구분, 양·음 배부 차이를 확인했다. 운영비·기타수익·이자·세금의 손익 반영, 설정값 변경, 전표 조회·역분개, 음수/미지원 category 거절, ADMIN 외 접근 거절, UNKNOWN 부품 원가의 손익 전파도 확인했다. V20 upgrade 테스트는 V19 데이터와 invoice·allocation·resolution 보존 및 새 기본값/제약조건을 확인했다.
+실제 PostgreSQL 17 로컬 환경에서 다음을 확인했다.
 
-Historical labor snapshot 회귀 검증: 수동 확정 인건비는 배부원가와 배부 차이에 포함하되 `labor_minutes_snapshot`이 null이면 정비사별 배부시간, 기간 완료시간, 활용률을 null로 유지한다. 완료 작업이 없거나 실제 snapshot 시간이 0인 경우에는 숫자 0을 유지해 UNKNOWN과 구분한다.
+- Finance 기본 조회 기간: Asia/Seoul 기준 당월 1일 ~ 오늘
+- 정비사 월급 3,500,000원 / 기준시간 209시간 저장
+- 계산 시간당 원가 16,746원 확인
+- 9월 1일~21일 기간 급여 2,450,000원 확인
+- 과거 UNKNOWN 인건비 원가를 V19 수동 확정으로 20,000원 처리
+- 자동 확인 부품원가 0원과 UNKNOWN 구분
+- 과거 작업시간 UNKNOWN을 실제 0시간과 구분하여 `미확정` 유지
+- 수동 확정 인건비를 배부원가 및 배부 차이에 반영
+- 운영비 1,000,000원 입력 및 관리 손익 반영
+- append-only 역분개 후 손익 복구
+- 신규 부품 입고 시 매입원가와 판매가 분리
+- 신규 WorkOrder에서 FIFO 부품원가 및 완료 시점 인건비 snapshot 자동 생성
+- ADMIN / MECHANIC / CUSTOMER 역할별 화면 및 내부 재무정보 비노출
 
-현재 급여 분석은 조회 시점의 활성 정비사와 현재 설정 월급을 사용한다. 입·퇴사일 및 급여 변경 이력이 없어 과거 급여대장을 재현하지 않으며 법정 회계·세무 자료가 아닌 관리 추정치다. 작업별 기여이익은 완료 snapshot 인건비를 사용하고, 기간 손익은 기간 급여를 사용해 두 값을 중복 차감하지 않는다. 기본 월급 3,500,000원·209시간·목표 30%는 계획 참고값이며 실제 급여나 검증된 시세가 아니다.
+신규 자동 원가 검증값:
 
-Production readiness 정적 검토: Vercel build에서는 HTTPS `API_BASE_URL`이 필수이고 브라우저는 동일 origin `/api/*` rewrite를 사용하므로 별도 CORS 의존이 없다. Render는 prod profile, secure cookie, DB/admin 환경변수를 요구한다. Hibernate는 `ddl-auto=validate`, Flyway는 startup enabled다. 저장소 설정에서 production용 localhost 의존이나 실제 secret 값은 발견하지 않았다. 실제 Vercel/Render/Neon 동작과 migration 적용은 실행 검증하지 않았다.
+| 항목 | 결과 |
+|---|---:|
+| 매출 | 50,000원 |
+| 자동 FIFO 부품원가 | 8,000원 |
+| 완료 시점 시간당 원가 | 16,746원 |
+| 작업시간 | 30분 |
+| 자동 인건비 | 8,373원 |
+| 총원가 | 16,373원 |
+| 기여이익 | 33,627원 |
+| 수납 | 50,000원 |
+| 미수 | 0원 |
 
-### 수동 E2E / 운영 체크리스트 — 아직 수행하지 않음
+계산:
 
-- [ ] PostgreSQL 17 `compose.test.yaml` 전체 테스트 통과 및 테스트 수 기록
-- [x] `npm ci`, `npm run typecheck`, `npm run build` 통과
-- [ ] 로컬 ADMIN: 매입 단가 입력, 정비사 원가 설정, 완료 작업 finance 목록/상세/summary 확인
-- [ ] 로컬 ADMIN: 정비사 월급 저장 후 향후 완료 snapshot 반영 및 과거 snapshot 불변 확인
-- [ ] 로컬 ADMIN: 운영 전표 입력·역분개, 설정 변경, 기간 급여·배부 차이·관리 손익 UI 확인
-- [ ] 로컬 MECHANIC 및 CUSTOMER: 작업 응답에서 `labor_minutes_snapshot`, `labor_hourly_cost_snapshot`, `labor_cost_snapshot`, `labor_cost_known` 비노출 확인
-- [ ] 입고 매입원가가 판매가와 분리되고 FIFO 소비·부분/전체 반환·UNKNOWN opening stock에서 손실/기여이익이 명시적으로 처리되는지 확인
-- [ ] invoice 발행/취소/재발행 및 수납/reversal 동작이 기존 snapshot을 보존하는지 확인
-- [ ] 인증·권한·CSRF·Idempotency-Key 동작 및 두 번 제출/재시도 확인
-- [ ] 브라우저 오류·레이아웃 확인 및 역할별 계정에서 finance 경로 접근 확인
-- [ ] Production smoke check 수행 전 backup/restore와 실제 PG 미연동 경계를 확인하고, 운영 확인 후 별도 증거/날짜 기록
+- 인건비: `16,746 × 30 / 60 = 8,373원`
+- 총원가: `8,000 + 8,373 = 16,373원`
+- 기여이익: `50,000 - 16,373 = 33,627원`
+
+### Production smoke
+
+Production frontend:
+
+`https://pitflow-orcin.vercel.app/`
+
+Production backend:
+
+`https://pitflow-api.onrender.com`
+
+Production database:
+
+Neon PostgreSQL
+
+production에서 다음을 확인했다.
+
+- Vercel production frontend 정상
+- Render backend API 연동 정상
+- V19/V20 Finance 화면 정상
+- 정비사 월급 및 기준시간 관리 정상
+- 과거 UNKNOWN 인건비 V19 수동 확정 정상
+- 기간 급여 및 배부 차이 계산 정상
+- 정산·수납값의 Finance 수납/미수/수납률 반영 정상
+- ADMIN 재무·원가 접근 정상
+- MECHANIC 작업 접근 정상 및 내부 재무정보 비노출
+- CUSTOMER 본인 작업/이력 접근 정상 및 관리자 재무 기능 비노출
+
+Production 수동 원가 확정 검증값:
+
+- 기간 매출: 887,000원
+- 과거 작업 6건의 인건비를 각각 1,000원으로 수동 확정
+- 작업 배부 인건비: 6,000원
+- 작업별 기여이익 합계: 881,000원
+- 기간 급여: 5,950,000원
+- 배부 차이: 5,944,000원
+- 전체 수납 처리 후 수납: 887,000원
+- 미수: 0원
+- 수납률: 100%
+
+기간 관리 손익은 작업별 배부 인건비를 다시 차감하지 않고 기간 급여를 사용한다.
+
+운영비·기타 손익이 없는 production 확인 시점:
+
+`887,000 - 5,950,000 = -5,063,000원`
+
+화면의 매출총이익·영업이익·순이익과 일치했다.
+
+### 권한 검증
+
+ADMIN:
+
+- 정비사 월급·기준시간 관리
+- Finance 원가 상세
+- 수동 원가 확정
+- 운영 전표 및 관리 손익 접근
+
+MECHANIC:
+
+- 본인 담당 작업 접근
+- 정비 항목 처리
+- 부품 사용·반환
+- 부품 부족 신고
+- 월급, 매입원가, 총원가, 기여이익, Finance 관리자 기능 비노출
+
+CUSTOMER:
+
+- 본인 차량·예약·작업·정비이력 접근
+- 판매 공임 및 고객용 정비정보 노출
+- 관리자 Finance, 정비사 월급, 매입원가, 내부 인건비, 총원가, 기여이익 비노출
+
+### 원가·재무 의미
+
+V17:
+
+- 입고 lot 실제 매입원가
+- FIFO 사용 allocation
+- 원래 소비 lot 기준 RETURN
+- UNKNOWN opening stock
+
+V18:
+
+- WorkOrder 완료 시점 labor snapshot
+- 완료 이후 현재 정비사 원가 변경과 무관하게 과거 snapshot 보존
+
+V19:
+
+- 과거 UNKNOWN 부품·인건비 원가 관리자 수동 확정
+- 자동 KNOWN 원가 덮어쓰기 금지
+- append-only 정정 이력
+- 0원도 KNOWN으로 처리
+
+V20:
+
+- 정비사 월급 및 기준시간
+- 월급 기반 시간당 원가
+- 달력 일수 기반 기간 급여
+- 작업 배부 인건비 / 기간 급여 분리
+- 배부 차이
+- 급여 비율
+- 운영비·기타 손익 전표
+- append-only reversal
+- 관리 손익 및 KPI
+
+### 남아 있는 제품 경계
+
+현재 Finance 기능은 법정 손익계산서, 재무상태표, 현금흐름표를 생성하는 회계 시스템이 아니다.
+
+현재 범위는 정비소 운영을 위한 관리 손익·원가·수익성 분석이다.
+
+정비사 급여 분석은 현재 설정된 급여와 활성 정비사를 기준으로 한다. 입사일·퇴사일 및 급여 변경 이력이 있는 정식 급여대장 기능은 현재 범위가 아니다.
+
+현재 수납은 외부 PG 승인이 아니라 현장에서 확인한 결제 사실을 기록한다.
+
+실제 PG 승인·취소·환불·webhook·reconciliation은 Phase 5 Payments 범위다.
+
+고밀도 관리자·정비사 화면의 추가 모바일 반응형 개선, 전체 production hardening, backup/restore drill 및 최종 포트폴리오 정리는 Phase 6 범위로 유지한다.
+
+### Phase 4C 최종 판정
+
+Phase 4C — Final Validation / Production Readiness / Documentation: 완료.
+
+Phase 4 — Finance & Cost: 완료.
+
+다음 구현 단계:
+
+Phase 5 — Payments.
