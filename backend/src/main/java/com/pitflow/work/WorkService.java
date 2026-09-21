@@ -3,6 +3,7 @@ package com.pitflow.work;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pitflow.common.ApiException;
+import com.pitflow.finance.TreasuryMutationService;
 import com.pitflow.notification.NotificationService;
 import com.pitflow.work.WorkRequests.*;
 import java.math.BigDecimal;
@@ -27,6 +28,7 @@ public class WorkService {
   private final TransactionTemplate tx;
   private final Clock clock;
   private final NotificationService notificationService;
+  private final TreasuryMutationService treasury;
   private static final BigDecimal MAX_QUANTITY = new BigDecimal("99999999999.999");
   private static final UUID WASHER_SERVICE =
       UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
@@ -37,12 +39,14 @@ public class WorkService {
       ObjectMapper json,
       PlatformTransactionManager manager,
       Clock clock,
-      NotificationService notificationService) {
+      NotificationService notificationService,
+      TreasuryMutationService treasury) {
     this.db = db;
     this.json = json;
     this.tx = new TransactionTemplate(manager);
     this.clock = clock;
     this.notificationService = notificationService;
+    this.treasury = treasury;
     this.tx.setTimeout(15);
   }
 
@@ -1041,9 +1045,21 @@ public class WorkService {
         () -> {
           var p = lockPart(part);
           if (!active(p)) throw conflict("비활성 부품은 입고할 수 없습니다.");
+          UUID actor = actor(email, true);
           UUID movement =
-              movement(key, actor(email, true), p, null, null, "RECEIPT", amount, r.reason());
+              movement(key, actor, p, null, null, "RECEIPT", amount, r.reason());
           createCostLot(part, movement, "RECEIPT", amount, unitCost);
+          if (unitCost != null) {
+            BigDecimal purchaseAmount =
+                amount.multiply(unitCost).setScale(0, RoundingMode.HALF_UP);
+            treasury.changeOperating(
+                purchaseAmount.negate(),
+                "INVENTORY_PURCHASE",
+                "부품 입고: " + p.get("name"),
+                "STOCK_MOVEMENT",
+                movement,
+                actor);
+          }
           return operation(key);
         });
   }

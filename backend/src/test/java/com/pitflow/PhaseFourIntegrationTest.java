@@ -72,6 +72,11 @@ class PhaseFourIntegrationTest {
 
   @AfterEach
   void clean() {
+    db.update("DELETE FROM treasury_ledger WHERE event_type<>'OPENING_ALLOCATION'");
+    db.update(
+        "UPDATE treasury_accounts SET balance=CASE account_type"
+            + " WHEN 'OPERATING' THEN 400000000 WHEN 'DEPOSIT' THEN 300000000"
+            + " ELSE 300000000 END,updated_at=CURRENT_TIMESTAMP");
     db.update("DELETE FROM payment_records WHERE kind='REVERSAL'");
     db.update("DELETE FROM payment_records");
     db.update("DELETE FROM invoice_items");
@@ -332,10 +337,26 @@ class PhaseFourIntegrationTest {
     UUID w = running();
     complete(w);
     String i = invoice(w);
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue())
+        .isEqualByComparingTo("20000");
+    assertThat(
+            read("/api/admin/finance/treasury", admin)
+                .get("managed_assets_known_total")
+                .decimalValue())
+        .isEqualByComparingTo("1000020000");
     UUID key = UUID.randomUUID();
     assertThat(status(payPath(i), payment(19999), key)).isEqualTo(409);
     assertThat(status(payPath(i), payment(20000), key)).isEqualTo(200);
     assertThat(status(payPath(i), payment(20000), key)).isEqualTo(200);
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("400020000");
+    assertThat(count("treasury_ledger WHERE event_type='CUSTOMER_PAYMENT'")).isOne();
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue())
+        .isEqualByComparingTo("0");
+    assertThat(
+            read("/api/admin/finance/treasury", admin)
+                .get("managed_assets_known_total")
+                .decimalValue())
+        .isEqualByComparingTo("1000020000");
     assertThat(status(payPath(i), payment(20000), UUID.randomUUID())).isEqualTo(409);
     String cancel = "/api/admin/billing/invoices/" + i + "/void";
     assertThat(status(cancel, Map.of("reason", "정정"), UUID.randomUUID())).isEqualTo(409);
@@ -344,11 +365,191 @@ class PhaseFourIntegrationTest {
     key = UUID.randomUUID();
     assertThat(status(reverse, Map.of("reason", "수납 취소"), key)).isEqualTo(200);
     assertThat(status(reverse, Map.of("reason", "수납 취소"), key)).isEqualTo(200);
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("400000000");
+    assertThat(count("treasury_ledger WHERE event_type='PAYMENT_REFUND'")).isOne();
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue())
+        .isEqualByComparingTo("20000");
     assertThat(status(reverse, Map.of("reason", "수납 취소"), UUID.randomUUID())).isEqualTo(409);
     assertThat(status(cancel, Map.of("reason", "정정"), UUID.randomUUID())).isEqualTo(200);
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue())
+        .isEqualByComparingTo("0");
     assertThat(count("payment_records")).isEqualTo(2);
     assertThat(count("invoice_items")).isEqualTo(1);
     assertThat(invoice(w)).isNotEqualTo(i);
+  }
+
+  @Test
+  void historicalPaymentRowsAreNotBackfilledIntoTreasury() throws Exception {
+    UUID w = running();
+    complete(w);
+    UUID invoice = UUID.fromString(invoice(w));
+    UUID actor =
+        db.queryForObject("SELECT id FROM users WHERE email=?", UUID.class, admin);
+    UUID operation = UUID.randomUUID();
+    db.update(
+        "INSERT INTO stock_operations (id,actor_id,request_hash,response_body,created_at)"
+            + " VALUES (?,?,'historical-payment',NULL,CURRENT_TIMESTAMP)",
+        operation,
+        actor);
+    db.update(
+        "INSERT INTO payment_records"
+            + " (id,invoice_id,operation_id,kind,original_payment_id,amount,method,reference,"
+            + "reason,actor_id,created_at) VALUES (?,?,?,'PAYMENT',NULL,20000,'CASH','',"
+            + "'V22 이전 수납',?,CURRENT_TIMESTAMP)",
+        UUID.randomUUID(),
+        invoice,
+        operation,
+        actor);
+
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue())
+        .isEqualByComparingTo("0");
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("400000000");
+    assertThat(count("treasury_ledger WHERE event_type='CUSTOMER_PAYMENT'")).isZero();
+  }
+
+  @Test
+  void paymentAndTreasuryLedgerRollBackTogetherOnCashLedgerFailure() throws Exception {
+    UUID w = running();
+    complete(w);
+    String invoice = invoice(w);
+    UUID key = UUID.randomUUID();
+    db.execute(
+        "ALTER TABLE treasury_ledger ADD CONSTRAINT test_no_customer_payment"
+            + " CHECK (event_type<>'CUSTOMER_PAYMENT')");
+    try {
+      assertThat(status(payPath(invoice), payment(20000), key)).isEqualTo(409);
+      assertThat(count("payment_records")).isZero();
+      assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("400000000");
+      assertThat(
+              db.queryForObject(
+                  "SELECT COUNT(*) FROM stock_operations WHERE id=?", Integer.class, key))
+          .isZero();
+    } finally {
+      db.execute("ALTER TABLE treasury_ledger DROP CONSTRAINT test_no_customer_payment");
+    }
+    assertThat(status(payPath(invoice), payment(20000), key)).isEqualTo(200);
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("400020000");
+  }
+
+  @Test
+  void knownReceiptMovesCashToInventoryAndUnknownAndZeroRemainDistinct() throws Exception {
+    UUID known = part("KNOWN-ASSET", "0");
+    UUID key = UUID.randomUUID();
+    Object knownReceipt =
+        Map.of("quantity", "10", "reason", "확정 매입", "purchaseUnitCost", "20000");
+    assertThat(
+            request(
+                    "POST",
+                    "/api/admin/parts/" + known + "/receipts",
+                    knownReceipt,
+                    key,
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    assertThat(
+            request(
+                    "POST",
+                    "/api/admin/parts/" + known + "/receipts",
+                    knownReceipt,
+                    key,
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    assertThat(balance(known)).isEqualByComparingTo("10");
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("399800000");
+    assertThat(count("treasury_ledger WHERE event_type='INVENTORY_PURCHASE'")).isOne();
+
+    UUID unknown = part("UNKNOWN-ASSET", "3");
+    UUID zero = part("ZERO-ASSET", "0");
+    ok(
+        "POST",
+        "/api/admin/parts/" + zero + "/receipts",
+        Map.of("quantity", "2", "reason", "무상 입고", "purchaseUnitCost", "0"));
+    JsonNode treasury = read("/api/admin/finance/treasury", admin);
+    assertThat(treasury.get("managed_assets_known_total").decimalValue())
+        .isEqualByComparingTo("1000000000");
+    assertThat(treasury.get("managed_assets_fully_known").asBoolean()).isFalse();
+    assertThat(treasury.get("inventory").get("known_value").decimalValue())
+        .isEqualByComparingTo("200000");
+    assertThat(treasury.get("inventory").get("unknown_quantity").decimalValue())
+        .isEqualByComparingTo("3");
+    assertThat(treasury.get("inventory").get("unknown_part_count").asInt()).isOne();
+    assertThat(
+            db.queryForObject(
+                "SELECT cost_known FROM inventory_cost_lots WHERE part_id=?", Boolean.class, zero))
+        .isTrue();
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("399800000");
+    assertThat(unknown).isNotNull();
+  }
+
+  @Test
+  void insufficientCashAndLedgerFailureRollBackWholeKnownReceipt() throws Exception {
+    UUID p = part("ROLLBACK-ASSET", "0");
+    db.update("UPDATE treasury_accounts SET balance=100 WHERE account_type='OPERATING'");
+    Object body =
+        Map.of("quantity", "1", "reason", "고가 매입", "purchaseUnitCost", "200");
+    assertThat(status("/api/admin/parts/" + p + "/receipts", body, UUID.randomUUID()))
+        .isEqualTo(409);
+    assertThat(balance(p)).isEqualByComparingTo("0");
+    assertThat(count("stock_movements WHERE part_id='" + p + "'")).isZero();
+    assertThat(count("inventory_cost_lots WHERE part_id='" + p + "'")).isZero();
+
+    db.update("UPDATE treasury_accounts SET balance=400000000 WHERE account_type='OPERATING'");
+    db.execute(
+        "ALTER TABLE treasury_ledger ADD CONSTRAINT test_no_inventory_purchase"
+            + " CHECK (event_type<>'INVENTORY_PURCHASE')");
+    try {
+      assertThat(status("/api/admin/parts/" + p + "/receipts", body, UUID.randomUUID()))
+          .isEqualTo(409);
+      assertThat(balance(p)).isEqualByComparingTo("0");
+      assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("400000000");
+      assertThat(count("inventory_cost_lots WHERE part_id='" + p + "'")).isZero();
+    } finally {
+      db.execute("ALTER TABLE treasury_ledger DROP CONSTRAINT test_no_inventory_purchase");
+    }
+  }
+
+  @Test
+  void useReturnAndAdjustmentsRevalueInventoryWithoutMovingTreasury() throws Exception {
+    UUID p = part("VALUATION-ASSET", "0");
+    ok(
+        "POST",
+        "/api/admin/parts/" + p + "/receipts",
+        Map.of("quantity", "2", "reason", "확정 매입", "purchaseUnitCost", "10000"));
+    UUID w = running();
+    String use = ok("POST", usePath(w), use(p, "1")).get("movements").get(0).get("id").asText();
+    assertInventory("10000", "0");
+    ok(
+        "POST",
+        "/api/admin/work-orders/" + w + "/parts/return",
+        Map.of("originalUseId", use, "quantity", "0.5", "reason", "실물 반환"));
+    assertInventory("15000", "0");
+    ok(
+        "POST",
+        "/api/admin/parts/" + p + "/adjustments",
+        Map.of("quantity", "1", "expectedQuantity", "1.5", "reason", "감모"));
+    assertInventory("10000", "0");
+    ok(
+        "POST",
+        "/api/admin/parts/" + p + "/adjustments",
+        Map.of("quantity", "2", "expectedQuantity", "1", "reason", "미확정 발견"));
+    assertInventory("10000", "1");
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("399980000");
+  }
+
+  private void assertInventory(String known, String unknown) throws Exception {
+    JsonNode inventory = read("/api/admin/finance/treasury", admin).get("inventory");
+    assertThat(inventory.get("known_value").decimalValue()).isEqualByComparingTo(known);
+    assertThat(inventory.get("unknown_quantity").decimalValue()).isEqualByComparingTo(unknown);
+  }
+
+  private BigDecimal treasuryBalance(String type) {
+    return db.queryForObject(
+        "SELECT balance FROM treasury_accounts WHERE account_type=?", BigDecimal.class, type);
   }
 
   @Test

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.pitflow.billing.BillingRequests.*;
 import com.pitflow.common.ApiException;
+import com.pitflow.finance.TreasuryMutationService;
 import com.pitflow.work.WorkService;
 import java.math.*;
 import java.nio.charset.StandardCharsets;
@@ -23,13 +24,20 @@ public class BillingService {
   private final WorkService work;
   private final ObjectMapper json;
   private final Clock clock;
+  private final TreasuryMutationService treasury;
   private static final BigDecimal MAX = new BigDecimal("99999999999999");
 
-  public BillingService(JdbcTemplate db, WorkService work, ObjectMapper json, Clock clock) {
+  public BillingService(
+      JdbcTemplate db,
+      WorkService work,
+      ObjectMapper json,
+      Clock clock,
+      TreasuryMutationService treasury) {
     this.db = db;
     this.work = work;
     this.json = json;
     this.clock = clock;
+    this.treasury = treasury;
   }
 
   private OffsetDateTime now() {
@@ -275,19 +283,28 @@ ORDER BY u.id
           if (total.compareTo(r.expectedTotal()) != 0) throw conflict("확인한 금액과 명세 금액이 다릅니다.");
           if (total.signum() == 0) throw conflict("0원 명세에는 수납 기록이 필요하지 않습니다.");
           if (paid(invoice).signum() != 0) throw conflict("이미 수납한 명세입니다.");
+          UUID payment = UUID.randomUUID();
+          UUID actor = actor(email, true);
           db.update(
               """
 INSERT INTO payment_records (id,invoice_id,operation_id,kind,amount,method,reference,reason,actor_id,created_at)
 VALUES (?,?,?,'PAYMENT',?,?,?,'현장 수납 확인',?,?)
 """,
-              UUID.randomUUID(),
+              payment,
               invoice,
               key,
               total,
               r.method().name(),
               r.reference() == null ? "" : r.reference().strip(),
-              actor(email, true),
+              actor,
               now());
+          treasury.changeOperating(
+              total,
+              "CUSTOMER_PAYMENT",
+              "고객 수납",
+              "PAYMENT_RECORD",
+              payment,
+              actor);
           return detail(email, invoice, true);
         });
   }
@@ -306,12 +323,14 @@ VALUES (?,?,?,'PAYMENT',?,?,?,'현장 수납 확인',?,?)
           if (!db.queryForList(
                   "SELECT id FROM payment_records WHERE original_payment_id=?", payment)
               .isEmpty()) throw conflict("이미 취소한 수납입니다.");
+          UUID reversal = UUID.randomUUID();
+          UUID actor = actor(email, true);
           db.update(
               """
 INSERT INTO payment_records (id,invoice_id,operation_id,kind,original_payment_id,amount,method,reference,reason,actor_id,created_at)
 VALUES (?,?,?,'REVERSAL',?,?,?,?,?,?,?)
 """,
-              UUID.randomUUID(),
+              reversal,
               invoice,
               key,
               payment,
@@ -319,8 +338,15 @@ VALUES (?,?,?,'REVERSAL',?,?,?,?,?,?,?)
               original.get("method"),
               original.get("reference"),
               r.reason().strip(),
-              actor(email, true),
+              actor,
               now());
+          treasury.changeOperating(
+              number(original, "amount").negate(),
+              "PAYMENT_REFUND",
+              "고객 수납 취소: " + r.reason().strip(),
+              "PAYMENT_RECORD",
+              reversal,
+              actor);
           return detail(email, invoice, true);
         });
   }

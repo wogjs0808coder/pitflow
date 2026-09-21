@@ -44,7 +44,8 @@ public final class FinanceRequests {
       @NotNull LocalDate entryDate,
       @NotNull EntryCategory category,
       @NotNull @DecimalMin("0") @Digits(integer = 14, fraction = 0) BigDecimal amount,
-      @NotBlank @Size(max = 500) String description) {}
+      @NotBlank @Size(max = 500) String description,
+      Boolean affectsTreasury) {}
 
   public record Reversal(@NotBlank @Size(max = 500) String reason) {}
 }

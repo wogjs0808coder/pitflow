@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
 import { api, errorText, won } from "@/lib/api";
 import { FinanceEntry, FinanceSettings, FinanceSummary, FinanceWork, TreasuryAccountType, TreasurySummary } from "@/lib/finance";
@@ -126,6 +127,16 @@ export function FinanceAdmin() {
       category: data.get("category"),
       amount: Number(data.get("amount")),
       description: data.get("description"),
+      affectsTreasury: data.get("affectsTreasury") === "on",
+    });
+  };
+  const submitPayroll = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    void command.run("/api/admin/finance/treasury/payroll-payment", {
+      amount: Number(data.get("amount")),
+      paymentDate: data.get("paymentDate"),
+      reason: data.get("reason"),
     });
   };
   const reverseEntry = (entry: FinanceEntry) => {
@@ -144,8 +155,22 @@ export function FinanceAdmin() {
         {treasury && (
           <section className="treasury-card" aria-label="현재 회사자산">
             <span className="eyebrow">TREASURY</span>
-            <span>현재 회사자산</span>
-            <strong className="treasury-total">{won(treasury.total_assets)}</strong>
+            <span>{treasury.managed_assets_fully_known ? "현재 회사자산" : "확인된 회사자산"}</span>
+            <strong className="treasury-total">{won(treasury.managed_assets_known_total)}</strong>
+            <div className="treasury-managed-summary">
+              <span>금융자산 <strong>{won(treasury.financial_assets_total)}</strong></span>
+              <span>
+                확정 재고자산
+                <strong>{won(treasury.inventory.known_value)}</strong>
+                <Link className="inline-link" href="/admin/parts">재고자산 상세 보기 →</Link>
+              </span>
+              <span>미수채권 <strong>{won(treasury.receivables)}</strong></span>
+            </div>
+            {!treasury.managed_assets_fully_known && (
+              <p className="finance-warning">
+                원가 미확정 재고 {treasury.inventory.unknown_part_count}개 품목 / {treasury.inventory.unknown_quantity.toLocaleString("ko-KR")}개
+              </p>
+            )}
             <div className="treasury-accounts">
               {TREASURY_ACCOUNTS.map(([type, label]) => {
                 const account = treasury.accounts[type];
@@ -165,6 +190,22 @@ export function FinanceAdmin() {
             >
               목표 비중으로 재조정
             </button>
+            <div className="treasury-simulation">
+              <span>예금 연 {percent(treasury.simulation.annual_deposit_rate)}</span>
+              <span>최근 정산 {treasury.simulation.last_settlement_date ?? "정산 전"}</span>
+              {treasury.simulation.last_deposit_interest !== null && <span>최근 예금 이자 +{won(treasury.simulation.last_deposit_interest)}</span>}
+              {treasury.simulation.last_investment_return_rate !== null && <span>최근 투자 {percent(treasury.simulation.last_investment_return_rate)} / {won(treasury.simulation.last_investment_return_amount ?? 0)}</span>}
+            </div>
+            <details className="treasury-payroll">
+              <summary>급여 실제 지급</summary>
+              <form onSubmit={submitPayroll}>
+                <label>지급일<input name="paymentDate" type="date" required defaultValue={initialTo} /></label>
+                <label>지급액<input name="amount" type="number" min="1" step="1" required /></label>
+                <label>사유<input name="reason" maxLength={500} required /></label>
+                <button className="button secondary" disabled={command.blocked}>운영자금에서 지급</button>
+              </form>
+              <p className="field-help">기간 급여 추정치와 별개인 실제 현금 지급입니다.</p>
+            </details>
           </section>
         )}
       </div>
@@ -247,6 +288,8 @@ export function FinanceAdmin() {
                 <label>구분<select name="category" required>{ENTRY_CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label>금액<input name="amount" type="number" min="0" step="1" required /></label>
                 <label className="finance-entry-description">설명<input name="description" maxLength={300} required /></label>
+                <label className="finance-cash-toggle"><input name="affectsTreasury" type="checkbox" />운영자금에 반영 (실제 지급/수입)</label>
+                <p className="field-help">감가상각은 선택해도 운영자금에 반영되지 않습니다.</p>
                 <button className="button primary" disabled={command.blocked}>전표 추가</button>
               </form>
             </section>
@@ -265,7 +308,7 @@ export function FinanceAdmin() {
                 <tbody>
                   {entries.map((entry) => (
                     <tr key={entry.id} className={entry.entry_kind === "REVERSAL" ? "finance-reversal" : ""}>
-                      <td>{entry.entry_date}</td><td>{categoryName(entry.category)}</td><td>{entry.description}</td>
+                      <td>{entry.entry_date}</td><td>{categoryName(entry.category)}{entry.affects_treasury ? " · 현금" : ""}</td><td>{entry.description}</td>
                       <td>{entry.entry_kind === "REVERSAL" ? "-" : ""}{won(entry.amount)}</td><td>{entry.created_by_name}</td>
                       <td>{entry.entry_kind === "ENTRY" && !entry.reversed ? <button className="button secondary" type="button" disabled={command.blocked} onClick={() => reverseEntry(entry)}>역분개</button> : entry.reversed ? "역분개 완료" : "역분개"}</td>
                     </tr>

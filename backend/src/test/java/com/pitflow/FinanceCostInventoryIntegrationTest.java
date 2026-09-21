@@ -83,6 +83,11 @@ class FinanceCostInventoryIntegrationTest {
 
   @AfterEach
   void clean() {
+    db.update("DELETE FROM treasury_ledger WHERE event_type<>'OPENING_ALLOCATION'");
+    db.update(
+        "UPDATE treasury_accounts SET balance=CASE account_type"
+            + " WHEN 'OPERATING' THEN 400000000 WHEN 'DEPOSIT' THEN 300000000"
+            + " ELSE 300000000 END,updated_at=CURRENT_TIMESTAMP");
     db.update("DELETE FROM finance_entries");
     db.update(
         "UPDATE finance_settings SET default_monthly_base_salary=3500000,"
@@ -1233,5 +1238,136 @@ class FinanceCostInventoryIntegrationTest {
     assertThat(unknown.get("operating_profit").isNull()).isTrue();
     assertThat(unknown.get("pre_tax_profit").isNull()).isTrue();
     assertThat(unknown.get("net_profit").isNull()).isTrue();
+  }
+
+  @Test
+  void treasuryCashEntriesAndPayrollAreAtomicIdempotentAndDoNotChangePayrollAnalytics()
+      throws Exception {
+    JsonNode before = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    JsonNode payrollBefore = before.get("period_payroll_expense");
+
+    UUID rentKey = UUID.randomUUID();
+    Map<String, Object> rent =
+        Map.of(
+            "entryDate", "2026-09-21",
+            "category", "RENT",
+            "amount", 1000,
+            "description", "현금 임차료",
+            "affectsTreasury", true);
+    JsonNode rentEntry = ok("POST", "/api/admin/finance/entries", rent, rentKey);
+    ok("POST", "/api/admin/finance/entries", rent, rentKey);
+    assertThat(treasuryBalance()).isEqualByComparingTo("399999000");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM treasury_ledger WHERE event_type='OPERATING_EXPENSE'",
+                Integer.class))
+        .isEqualTo(1);
+
+    ok(
+        "POST",
+        "/api/admin/finance/entries",
+        Map.of(
+            "entryDate", "2026-09-21",
+            "category", "OTHER_INCOME",
+            "amount", 200,
+            "description", "현금 기타수익",
+            "affectsTreasury", true));
+    JsonNode depreciation =
+        ok(
+            "POST",
+            "/api/admin/finance/entries",
+            Map.of(
+                "entryDate", "2026-09-21",
+                "category", "DEPRECIATION",
+                "amount", 500,
+                "description", "감가상각",
+                "affectsTreasury", true));
+    ok(
+        "POST",
+        "/api/admin/finance/entries",
+        Map.of(
+            "entryDate", "2026-09-21",
+            "category", "UTILITIES",
+            "amount", 300,
+            "description", "미지급 공과금",
+            "affectsTreasury", false));
+    assertThat(depreciation.get("affects_treasury").asBoolean()).isFalse();
+    assertThat(treasuryBalance()).isEqualByComparingTo("399999200");
+
+    ok(
+        "POST",
+        "/api/admin/finance/entries/" + rentEntry.get("id").asText() + "/reversal",
+        Map.of("reason", "현금 지출 취소"));
+    assertThat(treasuryBalance()).isEqualByComparingTo("400000200");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM treasury_ledger WHERE event_type='OPERATING_EXPENSE'",
+                Integer.class))
+        .isEqualTo(2);
+
+    UUID payrollKey = UUID.randomUUID();
+    Map<String, Object> payroll =
+        Map.of("amount", 3500000, "paymentDate", "2026-09-21", "reason", "9월 급여");
+    ok("POST", "/api/admin/finance/treasury/payroll-payment", payroll, payrollKey);
+    ok("POST", "/api/admin/finance/treasury/payroll-payment", payroll, payrollKey);
+    assertThat(treasuryBalance()).isEqualByComparingTo("396500200");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM treasury_ledger WHERE event_type='PAYROLL_PAYMENT'",
+                Integer.class))
+        .isEqualTo(1);
+    JsonNode after = read("/api/admin/finance/summary?from=2026-09-01&to=2026-09-30");
+    assertThat(after.get("period_payroll_expense")).isEqualTo(payrollBefore);
+
+    assertThat(
+            mvc.perform(
+                    post("/api/admin/finance/treasury/payroll-payment")
+                        .with(user(admin).roles("ADMIN"))
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(payroll)))
+                .andReturn()
+                .getResponse()
+                .getStatus())
+        .isEqualTo(403);
+    for (String role : List.of("CUSTOMER", "MECHANIC")) {
+      assertThat(
+              mvc.perform(
+                      post("/api/admin/finance/treasury/payroll-payment")
+                          .with(user("blocked@example.com").roles(role))
+                          .with(csrf())
+                          .header("Idempotency-Key", UUID.randomUUID())
+                          .contentType(MediaType.APPLICATION_JSON)
+                          .content(json.writeValueAsString(payroll)))
+                  .andReturn()
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(403);
+    }
+
+    db.update("UPDATE treasury_accounts SET balance=1 WHERE account_type='OPERATING'");
+    int ledgerBefore =
+        db.queryForObject(
+            "SELECT COUNT(*) FROM treasury_ledger WHERE event_type='PAYROLL_PAYMENT'", Integer.class);
+    assertThat(
+            request(
+                    "POST",
+                    "/api/admin/finance/treasury/payroll-payment",
+                    Map.of("amount", 2, "paymentDate", "2026-09-21", "reason", "잔액 초과"),
+                    UUID.randomUUID())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+    assertThat(treasuryBalance()).isEqualByComparingTo("1");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM treasury_ledger WHERE event_type='PAYROLL_PAYMENT'",
+                Integer.class))
+        .isEqualTo(ledgerBefore);
+  }
+
+  BigDecimal treasuryBalance() {
+    return db.queryForObject(
+        "SELECT balance FROM treasury_accounts WHERE account_type='OPERATING'", BigDecimal.class);
   }
 }
