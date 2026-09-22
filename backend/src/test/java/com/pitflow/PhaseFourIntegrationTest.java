@@ -3,10 +3,12 @@ package com.pitflow;
 import static org.assertj.core.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.*;
 import com.pitflow.user.*;
 import com.pitflow.vehicle.*;
+import com.pitflow.billing.TossPaymentGateway;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -20,6 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.*;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -30,12 +33,15 @@ class PhaseFourIntegrationTest {
   @Autowired JdbcTemplate db;
   @Autowired UserRepository users;
   @Autowired VehicleRepository vehicles;
+  @MockitoBean TossPaymentGateway toss;
   UUID car, customer, mechanic, appointment, serviceItem;
   final String admin = "work-admin@example.com";
 
   @BeforeEach
   void setup() throws Exception {
     clean();
+    when(toss.configured()).thenReturn(true);
+    when(toss.clientKey()).thenReturn("test_ck_phase5c");
     customer =
         users
             .saveAndFlush(
@@ -77,6 +83,9 @@ class PhaseFourIntegrationTest {
         "UPDATE treasury_accounts SET balance=CASE account_type"
             + " WHEN 'OPERATING' THEN 400000000 WHEN 'DEPOSIT' THEN 300000000"
             + " ELSE 300000000 END,updated_at=CURRENT_TIMESTAMP");
+    db.update("UPDATE inventory_cost_lots SET cost_resolution_id=NULL");
+    db.update("DELETE FROM inventory_cost_resolutions");
+    db.update("DELETE FROM payment_provider_orders");
     db.update("DELETE FROM payment_records WHERE kind='REVERSAL'");
     db.update("DELETE FROM payment_records");
     db.update("DELETE FROM invoice_items");
@@ -267,6 +276,70 @@ class PhaseFourIntegrationTest {
 
   Object payment(int amount) {
     return Map.of("method", "CARD", "reference", "test", "expectedTotal", amount);
+  }
+
+  Object payment(String method, int amount) {
+    return Map.of("method", method, "reference", "test", "expectedTotal", amount);
+  }
+
+  record BilledWork(UUID work, UUID invoice) {}
+
+  record TossCycle(UUID invoice, String orderId, String paymentKey, BigDecimal amount, UUID payment) {}
+
+  BilledWork billedWork() throws Exception {
+    UUID work = work(appointment());
+    ok("PATCH", "/api/admin/work-orders/" + work + "/status", Map.of("status", "IN_PROGRESS"));
+    complete(work);
+    return new BilledWork(work, UUID.fromString(invoice(work)));
+  }
+
+  JsonNode prepareToss(UUID invoice, UUID key) throws Exception {
+    var prepared = request(
+        "POST", "/api/billing/invoices/" + invoice + "/toss/orders", Map.of(), key,
+        "work-customer@example.com", true);
+    assertThat(prepared.getResponse().getStatus())
+        .withFailMessage(prepared.getResponse().getContentAsString())
+        .isEqualTo(200);
+    return json.readTree(prepared.getResponse().getContentAsString());
+  }
+
+  TossCycle confirmToss(UUID invoice, JsonNode order, String suffix) throws Exception {
+    String orderId = order.get("orderId").asText();
+    BigDecimal amount = order.get("amount").decimalValue();
+    String paymentKey = "test_lifecycle_" + suffix;
+    var approved = new TossPaymentGateway.Payment(paymentKey, orderId, amount, "DONE");
+    when(toss.confirm(paymentKey, orderId, amount)).thenReturn(approved);
+    when(toss.lookup(paymentKey)).thenReturn(approved);
+    var confirmed = request(
+        "POST",
+        "/api/billing/toss/confirm",
+        Map.of("paymentKey", paymentKey, "orderId", orderId, "amount", amount, "invoiceId", invoice),
+        UUID.randomUUID(),
+        "work-customer@example.com",
+        true);
+    assertThat(confirmed.getResponse().getStatus())
+        .withFailMessage(confirmed.getResponse().getContentAsString())
+        .isEqualTo(200);
+    UUID payment = db.queryForObject(
+        "SELECT payment_record_id FROM payment_provider_orders WHERE provider_order_id=?",
+        UUID.class,
+        orderId);
+    return new TossCycle(invoice, orderId, paymentKey, amount, payment);
+  }
+
+  UUID refundToss(TossCycle cycle, String reason) throws Exception {
+    when(toss.cancel(eq(cycle.paymentKey()), anyString(), any()))
+        .thenReturn(
+            new TossPaymentGateway.Payment(
+                cycle.paymentKey(), cycle.orderId(), cycle.amount(), "CANCELED"));
+    UUID key = UUID.randomUUID();
+    assertThat(
+            status(
+                "/api/admin/billing/payments/" + cycle.payment() + "/toss-refund",
+                Map.of("reason", reason),
+                key))
+        .isEqualTo(200);
+    return key;
   }
 
   int status(String path, Object body, UUID key) throws Exception {
@@ -484,6 +557,422 @@ class PhaseFourIntegrationTest {
         .isTrue();
     assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo("399800000");
     assertThat(unknown).isNotNull();
+  }
+
+  @Test
+  void unknownInventoryCostResolutionIsPartialIdempotentAndCashNeutral() throws Exception {
+    UUID p = part("RESOLVE-ASSET", "10");
+    BigDecimal operating = treasuryBalance("OPERATING");
+    UUID key = UUID.randomUUID();
+    Object request = Map.of("quantity", "4", "unitCost", "70000", "reason", "초기 재고 원가 등록");
+    String path = "/api/admin/parts/" + p + "/cost-resolutions";
+
+    assertThat(status(path, request, key)).isEqualTo(200);
+    assertThat(status(path, request, key)).isEqualTo(200);
+    JsonNode inventory = read("/api/admin/finance/treasury", admin).get("inventory");
+    JsonNode row = inventory.get("items").findValuesAsText("part_id").isEmpty() ? null :
+        java.util.stream.StreamSupport.stream(inventory.get("items").spliterator(), false)
+            .filter(item -> p.toString().equals(item.get("part_id").asText())).findFirst().orElseThrow();
+    assertThat(row.get("known_quantity").decimalValue()).isEqualByComparingTo("4");
+    assertThat(row.get("unknown_quantity").decimalValue()).isEqualByComparingTo("6");
+    assertThat(row.get("known_asset_value").decimalValue()).isEqualByComparingTo("280000");
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo(operating);
+    assertThat(count("inventory_cost_resolutions WHERE part_id='" + p + "'")).isOne();
+
+    assertThat(status(path, Map.of("quantity", "6", "unitCost", "0", "reason", "무상 기초재고"), UUID.randomUUID()))
+        .isEqualTo(200);
+    inventory = read("/api/admin/finance/treasury", admin).get("inventory");
+    assertThat(inventory.get("unknown_quantity").decimalValue()).isEqualByComparingTo("0");
+    assertThat(treasuryBalance("OPERATING")).isEqualByComparingTo(operating);
+  }
+
+  @Test
+  void customerTossOrderRequiresInvoiceOwnershipAndRejectsPaidInvoice() throws Exception {
+    UUID w = running();
+    complete(w);
+    UUID invoice = UUID.fromString(invoice(w));
+    String customerEmail = "work-customer@example.com";
+    users.saveAndFlush(
+        new AppUser("other-customer@example.com", "test-hash", "다른 고객", AppUser.Role.CUSTOMER));
+
+    var owned = request(
+        "POST", "/api/billing/invoices/" + invoice + "/toss/orders", Map.of(),
+        UUID.randomUUID(), customerEmail, true);
+    assertThat(owned.getResponse().getStatus()).isEqualTo(200);
+    var foreign = request(
+        "POST", "/api/billing/invoices/" + invoice + "/toss/orders", Map.of(),
+        UUID.randomUUID(), "other-customer@example.com", true);
+    assertThat(foreign.getResponse().getStatus()).isEqualTo(404);
+
+    UUID paidWork = work(appointment());
+    ok("PATCH", "/api/admin/work-orders/" + paidWork + "/status", Map.of("status", "IN_PROGRESS"));
+    complete(paidWork);
+    String paidInvoice = invoice(paidWork);
+    assertThat(status(payPath(paidInvoice), payment(20000), UUID.randomUUID())).isEqualTo(200);
+    var duplicate = request(
+        "POST", "/api/billing/invoices/" + paidInvoice + "/toss/orders", Map.of(),
+        UUID.randomUUID(), customerEmail, true);
+    assertThat(duplicate.getResponse().getStatus()).isEqualTo(409);
+  }
+
+  @Test
+  void adminTossOrderAndConfirmKeepInvoiceCustomerIdentity() throws Exception {
+    UUID w = running();
+    complete(w);
+    UUID invoice = UUID.fromString(invoice(w));
+    var prepared = request(
+        "POST", "/api/admin/billing/invoices/" + invoice + "/toss/orders", Map.of(),
+        UUID.randomUUID(), admin, true);
+    assertThat(prepared.getResponse().getStatus()).isEqualTo(200);
+    JsonNode order = json.readTree(prepared.getResponse().getContentAsString());
+    String expectedCustomerKey = "customer_" + customer.toString().replace("-", "");
+    assertThat(order.get("customerKey").asText()).isEqualTo(expectedCustomerKey);
+    assertThat(order.get("customerEmail").asText()).isEqualTo("work-customer@example.com");
+    assertThat(
+            db.queryForObject(
+                "SELECT customer_id FROM payment_provider_orders WHERE invoice_id=?",
+                UUID.class,
+                invoice))
+        .isEqualTo(customer);
+
+    String orderId = order.get("orderId").asText();
+    BigDecimal amount = order.get("amount").decimalValue();
+    String paymentKey = "test_admin_counter_payment";
+    when(toss.confirm(paymentKey, orderId, amount))
+        .thenReturn(new TossPaymentGateway.Payment(paymentKey, orderId, amount, "DONE"));
+    var confirmed = request(
+        "POST",
+        "/api/admin/billing/toss/confirm",
+        Map.of("paymentKey", paymentKey, "orderId", orderId, "amount", amount, "invoiceId", invoice),
+        UUID.randomUUID(),
+        admin,
+        true);
+    assertThat(confirmed.getResponse().getStatus()).isEqualTo(200);
+    assertThat(
+            db.queryForObject(
+                "SELECT actor_id FROM payment_records WHERE invoice_id=? AND kind='PAYMENT'",
+                UUID.class,
+                invoice))
+        .isEqualTo(customer);
+    assertThat(count("treasury_ledger WHERE event_type='CUSTOMER_PAYMENT'")).isOne();
+
+    var duplicate = request(
+        "POST", "/api/admin/billing/invoices/" + invoice + "/toss/orders", Map.of(),
+        UUID.randomUUID(), admin, true);
+    assertThat(duplicate.getResponse().getStatus()).isEqualTo(409);
+  }
+
+  @Test
+  void onlyAdminCanReleaseAndOpenReceivableMustBePaidFirst() throws Exception {
+    UUID w = running();
+    complete(w);
+    String invoice = invoice(w);
+
+    var unpaidRelease = request(
+        "POST", "/api/admin/work-orders/" + w + "/release", Map.of(),
+        UUID.randomUUID(), admin, true);
+    assertThat(unpaidRelease.getResponse().getStatus()).isEqualTo(409);
+
+    var mechanicRelease =
+        mvc.perform(
+                post("/api/admin/work-orders/" + w + "/release")
+                    .with(user("mechanic-release@example.com").roles("MECHANIC"))
+                    .with(csrf())
+                    .header("Idempotency-Key", UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}"))
+            .andReturn();
+    assertThat(mechanicRelease.getResponse().getStatus()).isEqualTo(403);
+    var mechanicBilling =
+        mvc.perform(
+                post("/api/admin/billing/invoices/" + invoice + "/payments")
+                    .with(user("mechanic-billing@example.com").roles("MECHANIC"))
+                    .with(csrf())
+                    .header("Idempotency-Key", UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(json.writeValueAsString(payment(20000))))
+            .andReturn();
+    assertThat(mechanicBilling.getResponse().getStatus()).isEqualTo(403);
+
+    assertThat(status(payPath(invoice), payment(20000), UUID.randomUUID())).isEqualTo(200);
+    var released = request(
+        "POST", "/api/admin/work-orders/" + w + "/release", Map.of(),
+        UUID.randomUUID(), admin, true);
+    assertThat(released.getResponse().getStatus()).isEqualTo(200);
+    assertThat(json.readTree(released.getResponse().getContentAsString()).get("released_at").isNull())
+        .isFalse();
+  }
+
+  @Test
+  void tossConfirmRefundAndRetryAreIdempotentAndCashIntegrated() throws Exception {
+    UUID w = running();
+    complete(w);
+    UUID invoice = UUID.fromString(invoice(w));
+    String customerEmail = "work-customer@example.com";
+    UUID prepareKey = UUID.randomUUID();
+    var prepared = request("POST", "/api/billing/invoices/" + invoice + "/toss/orders", Map.of(), prepareKey, customerEmail, true);
+    assertThat(prepared.getResponse().getStatus()).isEqualTo(200);
+    JsonNode order = json.readTree(prepared.getResponse().getContentAsString());
+    String orderId = order.get("orderId").asText();
+    String paymentKey = "test_payment_key_phase5c";
+    BigDecimal amount = order.get("amount").decimalValue();
+    var approved = new TossPaymentGateway.Payment(paymentKey, orderId, amount, "DONE");
+    when(toss.confirm(paymentKey, orderId, amount)).thenReturn(approved);
+    when(toss.lookup(paymentKey)).thenReturn(approved);
+    UUID confirmKey = UUID.randomUUID();
+    Object confirm = Map.of("paymentKey", paymentKey, "orderId", orderId, "amount", amount, "invoiceId", invoice);
+
+    var invalid = request("POST", "/api/billing/toss/confirm",
+        Map.of("paymentKey", paymentKey, "orderId", orderId, "amount", amount.add(BigDecimal.ONE), "invoiceId", invoice),
+        UUID.randomUUID(), customerEmail, true);
+    assertThat(invalid.getResponse().getStatus()).isEqualTo(409);
+    db.execute("ALTER TABLE treasury_ledger ADD CONSTRAINT test_toss_internal_failure CHECK (event_type<>'CUSTOMER_PAYMENT')");
+    try {
+      var failed = request("POST", "/api/billing/toss/confirm", confirm, confirmKey, customerEmail, true);
+      assertThat(failed.getResponse().getStatus()).isEqualTo(409);
+      assertThat(count("payment_records")).isZero();
+    } finally {
+      db.execute("ALTER TABLE treasury_ledger DROP CONSTRAINT test_toss_internal_failure");
+    }
+    var recovered = request("POST", "/api/billing/toss/confirm", confirm, confirmKey, customerEmail, true);
+    var duplicate = request("POST", "/api/billing/toss/confirm", confirm, confirmKey, customerEmail, true);
+    var refreshed = request("POST", "/api/billing/toss/confirm", confirm, UUID.randomUUID(), customerEmail, true);
+    assertThat(recovered.getResponse().getStatus()).isEqualTo(200);
+    assertThat(duplicate.getResponse().getStatus()).isEqualTo(200);
+    assertThat(refreshed.getResponse().getStatus()).isEqualTo(200);
+    assertThat(count("payment_records WHERE kind='PAYMENT'")).isOne();
+    assertThat(count("treasury_ledger WHERE event_type='CUSTOMER_PAYMENT'")).isOne();
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue()).isEqualByComparingTo("0");
+    verify(toss, times(1)).confirm(paymentKey, orderId, amount);
+    verify(toss, atLeastOnce()).lookup(paymentKey);
+
+    UUID payment = db.queryForObject("SELECT id FROM payment_records WHERE kind='PAYMENT'", UUID.class);
+    var cancelled = new TossPaymentGateway.Payment(paymentKey, orderId, amount, "CANCELED");
+    when(toss.cancel(eq(paymentKey), anyString(), any())).thenReturn(cancelled);
+    UUID refundKey = UUID.randomUUID();
+    String refundPath = "/api/admin/billing/payments/" + payment + "/toss-refund";
+    assertThat(status(refundPath, Map.of("reason", "고객 요청"), refundKey)).isEqualTo(200);
+    assertThat(status(refundPath, Map.of("reason", "고객 요청"), refundKey)).isEqualTo(200);
+    assertThat(status(refundPath, Map.of("reason", "고객 요청"), UUID.randomUUID())).isEqualTo(409);
+    assertThat(count("payment_records WHERE kind='REVERSAL'")).isOne();
+    assertThat(count("treasury_ledger WHERE event_type='PAYMENT_REFUND'")).isOne();
+    assertThat(read("/api/admin/finance/treasury", admin).get("receivables").decimalValue()).isEqualByComparingTo(amount);
+  }
+
+  @Test
+  void tossRefundAllowsNewProviderAttemptWithoutReusingCanceledOrder() throws Exception {
+    BilledWork billed = billedWork();
+    UUID firstPrepareKey = UUID.randomUUID();
+    JsonNode firstOrder = prepareToss(billed.invoice(), firstPrepareKey);
+    var adminPrepared = request(
+        "POST",
+        "/api/admin/billing/invoices/" + billed.invoice() + "/toss/orders",
+        Map.of(),
+        UUID.randomUUID(),
+        admin,
+        true);
+    assertThat(adminPrepared.getResponse().getStatus()).isEqualTo(200);
+    assertThat(json.readTree(adminPrepared.getResponse().getContentAsString()).get("orderId").asText())
+        .isEqualTo(firstOrder.get("orderId").asText());
+    TossCycle first = confirmToss(billed.invoice(), firstOrder, "attempt_a");
+    UUID refundKey = refundToss(first, "재결제 테스트");
+
+    assertThat(
+            status(
+                "/api/admin/billing/payments/" + first.payment() + "/toss-refund",
+                Map.of("reason", "재결제 테스트"),
+                refundKey))
+        .isEqualTo(200);
+    assertThat(prepareToss(billed.invoice(), firstPrepareKey).get("orderId").asText())
+        .isEqualTo(first.orderId());
+
+    JsonNode secondOrder = prepareToss(billed.invoice(), UUID.randomUUID());
+    assertThat(secondOrder.get("orderId").asText()).isNotEqualTo(first.orderId());
+    assertThat(
+            db.queryForObject(
+                "SELECT status FROM payment_provider_orders WHERE provider_order_id=?",
+                String.class,
+                first.orderId()))
+        .isEqualTo("CANCELED");
+    TossCycle second = confirmToss(billed.invoice(), secondOrder, "attempt_b");
+    assertThat(second.payment()).isNotEqualTo(first.payment());
+    assertThat(count("payment_provider_orders WHERE invoice_id='" + billed.invoice() + "'"))
+        .isEqualTo(2);
+    JsonNode detail = read("/api/admin/billing/invoices/" + billed.invoice(), admin);
+    assertThat(detail.get("paid").decimalValue()).isEqualByComparingTo("20000");
+    assertThat(detail.get("balance").decimalValue()).isEqualByComparingTo("0");
+  }
+
+  @Test
+  void tossRefundAllowsCashOrTransferWithoutCreatingProviderOrder() throws Exception {
+    for (String method : List.of("CASH", "TRANSFER")) {
+      BilledWork billed = billedWork();
+      TossCycle tossPayment =
+          confirmToss(
+              billed.invoice(),
+              prepareToss(billed.invoice(), UUID.randomUUID()),
+              "refund_to_" + method.toLowerCase(Locale.ROOT));
+      refundToss(tossPayment, method + " 재수납");
+      assertThat(
+              request(
+                      "POST",
+                      "/api/admin/work-orders/" + billed.work() + "/release",
+                      Map.of(),
+                      UUID.randomUUID(),
+                      admin,
+                      true)
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(409);
+      int providerOrders = count("payment_provider_orders WHERE invoice_id='" + billed.invoice() + "'");
+      assertThat(
+              status(
+                  payPath(billed.invoice().toString()),
+                  payment(method, 20000),
+                  UUID.randomUUID()))
+          .isEqualTo(200);
+      assertThat(count("payment_provider_orders WHERE invoice_id='" + billed.invoice() + "'"))
+          .isEqualTo(providerOrders);
+      assertThat(
+              db.queryForObject(
+                  "SELECT method FROM payment_records WHERE invoice_id=? AND kind='PAYMENT'"
+                      + " ORDER BY created_at DESC,id DESC LIMIT 1",
+                  String.class,
+                  billed.invoice()))
+          .isEqualTo(method);
+      assertThat(
+              read("/api/admin/billing/invoices/" + billed.invoice(), admin)
+                  .get("balance")
+                  .decimalValue())
+          .isEqualByComparingTo("0");
+      assertThat(
+              request(
+                      "POST",
+                      "/api/admin/work-orders/" + billed.work() + "/release",
+                      Map.of(),
+                      UUID.randomUUID(),
+                      admin,
+                      true)
+                  .getResponse()
+                  .getStatus())
+          .isEqualTo(200);
+    }
+  }
+
+  @Test
+  void manualReversalAllowsTossOrAnotherManualMethodAndVoidRejectsPayments() throws Exception {
+    BilledWork cashThenToss = billedWork();
+    assertThat(
+            status(
+                payPath(cashThenToss.invoice().toString()),
+                payment("CASH", 20000),
+                UUID.randomUUID()))
+        .isEqualTo(200);
+    UUID cashPayment = db.queryForObject(
+        "SELECT id FROM payment_records WHERE invoice_id=? AND kind='PAYMENT'",
+        UUID.class,
+        cashThenToss.invoice());
+    assertThat(
+            status(
+                "/api/admin/billing/payments/" + cashPayment + "/reverse",
+                Map.of("reason", "결제수단 변경"),
+                UUID.randomUUID()))
+        .isEqualTo(200);
+    confirmToss(
+        cashThenToss.invoice(),
+        prepareToss(cashThenToss.invoice(), UUID.randomUUID()),
+        "cash_to_toss");
+
+    BilledWork cardThenCash = billedWork();
+    assertThat(
+            status(
+                payPath(cardThenCash.invoice().toString()),
+                payment("CARD", 20000),
+                UUID.randomUUID()))
+        .isEqualTo(200);
+    UUID cardPayment = db.queryForObject(
+        "SELECT id FROM payment_records WHERE invoice_id=? AND kind='PAYMENT'",
+        UUID.class,
+        cardThenCash.invoice());
+    assertThat(
+            status(
+                "/api/admin/billing/payments/" + cardPayment + "/reverse",
+                Map.of("reason", "현금 전환"),
+                UUID.randomUUID()))
+        .isEqualTo(200);
+    assertThat(
+            status(
+                payPath(cardThenCash.invoice().toString()),
+                payment("CASH", 20000),
+                UUID.randomUUID()))
+        .isEqualTo(200);
+    assertThat(
+            status(
+                payPath(cardThenCash.invoice().toString()),
+                payment("TRANSFER", 20000),
+                UUID.randomUUID()))
+        .isEqualTo(409);
+
+    BilledWork voided = billedWork();
+    assertThat(
+            status(
+                "/api/admin/billing/invoices/" + voided.invoice() + "/void",
+                Map.of("reason", "명세 무효"),
+                UUID.randomUUID()))
+        .isEqualTo(200);
+    assertThat(
+            status(
+                payPath(voided.invoice().toString()),
+                payment("CASH", 20000),
+                UUID.randomUUID()))
+        .isEqualTo(409);
+    var tossOnVoid = request(
+        "POST",
+        "/api/billing/invoices/" + voided.invoice() + "/toss/orders",
+        Map.of(),
+        UUID.randomUUID(),
+        "work-customer@example.com",
+        true);
+    assertThat(tossOnVoid.getResponse().getStatus()).isEqualTo(409);
+  }
+
+  @Test
+  void concurrentTossConfirmCreatesOnePaymentAndOneCashMutation() throws Exception {
+    UUID w = running();
+    complete(w);
+    UUID invoice = UUID.fromString(invoice(w));
+    String customerEmail = "work-customer@example.com";
+    var prepared = request("POST", "/api/billing/invoices/" + invoice + "/toss/orders", Map.of(),
+        UUID.randomUUID(), customerEmail, true);
+    JsonNode order = json.readTree(prepared.getResponse().getContentAsString());
+    String orderId = order.get("orderId").asText();
+    BigDecimal amount = order.get("amount").decimalValue();
+    String paymentKey = "test_concurrent_payment_key";
+    var approved = new TossPaymentGateway.Payment(paymentKey, orderId, amount, "DONE");
+    CountDownLatch confirming = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(toss.confirm(paymentKey, orderId, amount)).thenAnswer(call -> {
+      confirming.countDown();
+      assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+      return approved;
+    });
+    when(toss.lookup(paymentKey)).thenReturn(approved);
+    Object body = Map.of("paymentKey", paymentKey, "orderId", orderId, "amount", amount, "invoiceId", invoice);
+    var pool = Executors.newFixedThreadPool(2);
+    try {
+      var first = pool.submit(() -> request("POST", "/api/billing/toss/confirm", body, UUID.randomUUID(), customerEmail, true));
+      assertThat(confirming.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(status(payPath(invoice.toString()), payment(20000), UUID.randomUUID()))
+          .isEqualTo(409);
+      var second = pool.submit(() -> request("POST", "/api/billing/toss/confirm", body, UUID.randomUUID(), customerEmail, true));
+      assertThat(second.get(5, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+      release.countDown();
+      assertThat(first.get(5, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+    assertThat(count("payment_records WHERE kind='PAYMENT'")).isOne();
+    assertThat(count("treasury_ledger WHERE event_type='CUSTOMER_PAYMENT'")).isOne();
   }
 
   @Test

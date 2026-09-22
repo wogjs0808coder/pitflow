@@ -37,3 +37,7 @@ pitflow:
   bootstrap:
     admin-email: ${PITFLOW_ADMIN_EMAIL:}
     admin-password: ${PITFLOW_ADMIN_PASSWORD:}
+  toss:
+    client-key: ${TOSS_CLIENT_KEY:}
+    secret-key: ${TOSS_SECRET_KEY:}
+    api-base-url: ${TOSS_API_BASE_URL:https://api.tosspayments.com}

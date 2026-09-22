@@ -275,9 +275,7 @@ V20:
 
 정비사 급여 분석은 현재 설정된 급여와 활성 정비사를 기준으로 한다. 입사일·퇴사일 및 급여 변경 이력이 있는 정식 급여대장 기능은 현재 범위가 아니다.
 
-현재 수납은 외부 PG 승인이 아니라 현장에서 확인한 결제 사실을 기록한다.
-
-실제 PG 승인·취소·환불·webhook·reconciliation은 Phase 5 Payments 범위다.
+현장 수납은 관리자가 확인한 결제 사실을 기록한다. Phase 5C는 별도로 Toss Payments 테스트 결제의 요청·서버 승인·전액 환불을 지원하며 webhook과 부분 환불은 현재 범위가 아니다.
 
 고밀도 관리자·정비사 화면의 추가 모바일 반응형 개선, 전체 production hardening, backup/restore drill 및 최종 포트폴리오 정리는 Phase 6 범위로 유지한다.
 
@@ -336,3 +334,30 @@ Phase 5A — Treasury Core & Rebalancing: 완료.
 - 기존 Phase 4 Finance 화면 및 계산 회귀 없음 확인
 
 Phase 5B에서 은행예치 일복리와 투자자산 일일 수익률 시뮬레이션을 추가한다.
+
+## Phase 5C — Payments / Inventory Resolution / Finalization 검증 기록 (2026-09-22, Asia/Seoul)
+
+현재 판정: Phase 5C provider E2E와 PostgreSQL 17 검증 완료. 결제·출고 UX 후속 변경은 H2 전체 회귀와 frontend build를 통과했으며 최종 browser smoke가 남아 있다.
+
+| 검사 | 결과 |
+| --- | --- |
+| Phase 5C 집중 migration·결제·환불·원가 확정·동시성 테스트 | PASS — 22/22 |
+| H2 기반 Backend 전체 `verify` | PASS — 148/148, 실패 0, 오류 0, 건너뜀 0 |
+| Frontend `npm run typecheck` | PASS |
+| Frontend production build | PASS — 23/23 routes |
+| PostgreSQL 17 `compose.test.yaml` 전체 Backend 검증 | PASS — 142/142 (Phase 5C provider E2E 기준) |
+| 로컬 browser 재고자산·Finance smoke | PASS |
+| 실제 Toss 테스트 키 결제·환불 browser smoke | PASS — PAYMENT/환불과 Treasury 반영 확인 |
+
+검증한 범위:
+
+- V22→V23 migration과 기존 UNKNOWN lot 보존, V23→V24 결제 주문 다회 시도 migration, 재실행·validate
+- UNKNOWN 전체/부분/KNOWN 0원 확정, duplicate key, Treasury cash-neutral, 관리 자산 증가
+- Toss 금액 불일치 거절, 승인·중복 승인, 동시 승인 단일 payment/ledger, 내부 DB 실패 후 provider 조회 재시도
+- Toss 전액 환불·중복 환불과 OPERATING/미수채권 복원, 환불 후 새 Toss 주문 또는 CASH/TRANSFER 재수납
+- Customer 본인/타인 invoice 권한, ADMIN 카운터 주문의 invoice customer identity, paid invoice 중복 주문 차단
+- MECHANIC 출고 차단, ADMIN 출고, OPEN invoice 미수금 출고 차단
+- `/admin/parts` 기본 접힘, UNKNOWN-only `원가 미확정`, 예상 가치, 10 EA 중 4 EA 부분 확정 후 280,000원/UNKNOWN 6 EA 표시
+- `/admin/finance` 280,000원 재고자산·UNKNOWN warning 반영 및 상세 재고 table 미노출
+
+V1–V23 migration은 변경하지 않았고 V24만 추가했다. Customer 카드 결제 CTA, 환불 후 신규 Toss 또는 현장 재수납, ADMIN 카운터 결제, WorkOrder 명세 발행·결제·출고 UI를 수동 browser에서 최종 확인한다.

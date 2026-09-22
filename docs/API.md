@@ -162,3 +162,18 @@ availability는 `date`, `policy`, `closed`, `durationMinutes`, `totalLaborPrice`
 ```
 
 이미 목표 금액이면 POST는 성공 응답을 반환하되 REBALANCE 원장을 추가하지 않습니다. 재조정 시 같은 논리 거래의 계정별 변경은 하나의 `event_group_id`로 묶이며 delta 합계는 0입니다.
+
+## Phase 5C Toss Payments / inventory resolution
+
+| 메서드 | 경로 | 권한 | 설명 |
+|---|---|---|---|
+| POST | `/billing/invoices/{id}/toss/orders` | invoice 소유 CUSTOMER | 서버 invoice 금액으로 Toss 테스트 주문 준비 |
+| POST | `/billing/toss/confirm` | 주문 소유 CUSTOMER | paymentKey/orderId/amount 검증 후 서버 승인·수납 반영 |
+| POST | `/admin/billing/invoices/{id}/toss/orders` | ADMIN | 카운터 결제용 주문 준비. customer/customerKey는 invoice 고객 기준 |
+| POST | `/admin/billing/toss/confirm` | ADMIN | ADMIN 세션에서 승인하되 payment actor와 provider order는 invoice 고객 기준 |
+| POST | `/admin/billing/payments/{id}/toss-refund` | ADMIN | Toss 전액 취소 확인 후 reversal·Treasury 반영 |
+| POST | `/admin/parts/{id}/cost-resolutions` | ADMIN | UNKNOWN 재고 수량의 취득원가 전체/부분 확정 |
+
+모든 POST는 CSRF와 UUID `Idempotency-Key`가 필요합니다. confirm body는 `paymentKey`, `orderId`, `amount`, `invoiceId`이며 amount는 provider·주문·현재 invoice 미수금과 서버에서 다시 비교합니다. 전액 환불 후 새 idempotency key로 주문을 준비하면 취소된 주문을 재사용하지 않고 같은 invoice에 새 Toss 주문을 생성하며, CASH/TRANSFER 재수납도 허용합니다. 원가 확정 body는 `quantity`, `unitCost`, `reason`이며 `unitCost=0`은 KNOWN 0원입니다. 과거 UNKNOWN 원가 확정은 Treasury를 변경하지 않습니다.
+
+`POST /admin/work-orders/{id}/release`는 ADMIN 전용이며 OPEN invoice에 미수금이 남아 있으면 409로 차단합니다. 정비사 API에는 release endpoint가 없습니다.
