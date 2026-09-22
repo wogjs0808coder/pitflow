@@ -192,7 +192,7 @@ export function WorkOrders({
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
-  const disabled = command.blocked || loading || !!error;
+  const disabled = command.blocked || loading;
   const activeInvoice = detail
     ? invoices.find(
         (invoice) =>
@@ -791,6 +791,22 @@ export function WorkOrders({
                     {(admin || mechanic) && (
                       <div className="workflow-cta-actions">
                         <button
+                          className="button secondary"
+                          disabled={
+                            disabled ||
+                            !detail.items.some((i) => ["PENDING", "IN_PROGRESS"].includes(i.status))
+                          }
+                          onClick={() => {
+                            const completable = detail.items.filter((i) => ["PENDING", "IN_PROGRESS"].includes(i.status)).length;
+                            const waiting = detail.items.filter((i) => i.status === "WAITING_PARTS").length;
+                            const message = `완료 가능한 정비 항목 ${completable}건을 완료합니다.${waiting ? `\n부품 대기 ${waiting}건은 제외됩니다.` : ""}`;
+                            if (window.confirm(message))
+                              void command.run(`${base}/${detail.id}/items/complete-all`, {});
+                          }}
+                        >
+                          정비 항목 일괄 완료
+                        </button>
+                        <button
                           className="button primary"
                           disabled={
                             disabled ||
@@ -950,6 +966,8 @@ export function WorkOrders({
                     </div>
                   )
                 )}
+                <div className="work-detail-columns">
+                <div className="work-progress-column">
                 {(() => {
                   const completed = detail.items.filter(
                     (i) => i.status === "COMPLETED",
@@ -975,7 +993,7 @@ export function WorkOrders({
                     </p>
                   );
                 })()}
-                <h3>정비 항목</h3>
+                <h3 className="work-progress-heading">정비 항목</h3>
                 <ul className="work-items">
                   {detail.items.map((i) => (
                     <li key={i.id}>
@@ -1068,57 +1086,10 @@ export function WorkOrders({
                     </li>
                   ))}
                 </ul>
-                {mechanic && detail.status !== "COMPLETED" && detail.status !== "CANCELLED" && (
-                  <section className="mechanic-shortage-section">
-                    <h3>부품 부족 신고</h3>
-                    <p>재고가 부족해 작업을 진행할 수 없을 때 관리자에게 신고합니다.</p>
-                    <form
-                      onSubmit={(e) => {
-                        const f = fields(e);
-                        void command.run(`${base}/${detail.id}/shortages`, {
-                          workOrderItemId: f.get("workOrderItemId"),
-                          partId: f.get("partId"),
-                          requestedQuantity: f.get("requestedQuantity"),
-                          reason: f.get("shortageReason") || null,
-                        });
-                      }}
-                    >
-                      <fieldset disabled={disabled}>
-                        <label>
-                          정비 항목
-                          <select name="workOrderItemId" required defaultValue="">
-                            <option value="" disabled>항목 선택</option>
-                            {detail.items.map((item) => (
-                              <option key={item.id} value={item.id}>{item.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          부족 부품
-                          <select name="partId" required defaultValue="">
-                            <option value="" disabled>부품 선택</option>
-                            {parts.filter((part) => part.active !== false).map((part) => (
-                              <option key={part.id} value={part.id}>{part.name} · {part.sku} · {part.unit}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          필요한 수량
-                          <input name="requestedQuantity" type="number" min="0.001" max="99999999999.999" step="0.001" required />
-                        </label>
-                        <label>
-                          신고 사유 (선택)
-                          <input name="shortageReason" maxLength={500} />
-                        </label>
-                        <button className="button secondary">부품 부족 신고</button>
-                      </fieldset>
-                    </form>
-                  </section>
-                )}
                 {(admin || mechanic) &&
                   ["RECEIVED", "IN_PROGRESS", "WAITING_PARTS"].includes(detail.status) && (
                   <>
-                    {admin && <form
+                    {admin && <form className="work-assignment-form"
                       onSubmit={(e) => {
                         const f = fields(e);
                         void command.run(
@@ -1199,8 +1170,18 @@ export function WorkOrders({
                     )}
                   </section>
                 )}
+                <h3 className="work-event-heading">작업 이력</h3>
+                <ol className="work-event-list">
+                  {detail.events.map((e, i) => (
+                    <li key={i}>
+                      {localTime(e.created_at)} · {e.detail}
+                    </li>
+                  ))}
+                </ol>
+                </div>
+                <aside className="work-parts-column">
                 {admin && (
-                  <section>
+                  <section className="prepared-parts-section">
                     <h3>정비 항목별 준비 부품</h3>
                     <p>
                       연결된 부품 종류입니다. 차종별 규격·실제 사용량을
@@ -1210,7 +1191,7 @@ export function WorkOrders({
                       <ul>
                         {detail.suggested_parts.map((p) => (
                           <li key={p.id}>
-                            {p.name} · 재고 {String(p.quantity)} {p.unit}
+                            {p.name} · 필요 {p.required_quantity == null ? "수량 정보 없음" : `${String(p.required_quantity)} ${p.unit}`} · 재고 {String(p.quantity)} {p.unit}
                             {!p.active
                               ? " · 비활성"
                               : Number(p.quantity) === 0
@@ -1226,9 +1207,73 @@ export function WorkOrders({
                     )}
                   </section>
                 )}
+                {mechanic && (
+                  <section className="prepared-parts-section">
+                    <h3>필요 부품</h3>
+                    {detail.suggested_parts?.length ? (
+                      <ul>
+                        {detail.suggested_parts.map((p) => (
+                          <li key={p.id}>
+                            {p.name} · 필요 {p.required_quantity == null ? "작업 시 수량 확인" : `${String(p.required_quantity)} ${p.unit}`}
+                            {!p.active ? " · 비활성" : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>연결된 부품이 없거나 부품이 필요 없는 점검 항목입니다.</p>
+                    )}
+                  </section>
+                )}
+                {mechanic && detail.status !== "COMPLETED" && detail.status !== "CANCELLED" && (
+                  <section className="mechanic-shortage-section">
+                    <h3>부품 부족 신고</h3>
+                    <p>재고가 부족해 작업을 진행할 수 없을 때 관리자에게 신고합니다.</p>
+                    <form
+                      onSubmit={(e) => {
+                        const f = fields(e);
+                        void command.run(`${base}/${detail.id}/shortages`, {
+                          workOrderItemId: f.get("workOrderItemId"),
+                          partId: f.get("partId"),
+                          requestedQuantity: f.get("requestedQuantity"),
+                          reason: f.get("shortageReason") || null,
+                        });
+                      }}
+                    >
+                      <fieldset disabled={disabled}>
+                        <label>
+                          정비 항목
+                          <select name="workOrderItemId" required defaultValue="">
+                            <option value="" disabled>항목 선택</option>
+                            {detail.items.map((item) => (
+                              <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          부족 부품
+                          <select name="partId" required defaultValue="">
+                            <option value="" disabled>부품 선택</option>
+                            {parts.filter((part) => part.active !== false).map((part) => (
+                              <option key={part.id} value={part.id}>{part.name} · {part.sku} · {part.unit}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          필요한 수량
+                          <input name="requestedQuantity" type="number" min="0.001" max="99999999999.999" step="0.001" required />
+                        </label>
+                        <label>
+                          신고 사유 (선택)
+                          <input name="shortageReason" maxLength={500} />
+                        </label>
+                        <button className="button secondary">부품 부족 신고</button>
+                      </fieldset>
+                    </form>
+                  </section>
+                )}
                 {(admin || mechanic) && detail.status === "IN_PROGRESS" && (
                   <form
-                    className={mechanic ? "mechanic-parts-use" : undefined}
+                    className="mechanic-parts-use"
                     key={`${detail.id}-${revision}-use`}
                     onSubmit={(e) => {
                       const f = fields(e);
@@ -1271,22 +1316,37 @@ export function WorkOrders({
                               ),
                             ),
                         )
-                        .map((p) => (
+                        .map((p) => {
+                          const suggestion = detail.suggested_parts?.find((s) => s.id === p.id);
+                          return (
                           <label key={p.id}>
-                            {detail.suggested_parts?.some((s) => s.id === p.id)
-                              ? "[준비 부품] "
-                              : ""}
-                            {p.name} · {admin ? `재고 ${String(p.quantity)} ${p.unit}` : `${p.sku} · ${p.unit}`}
+                            {suggestion ? "[준비 부품] " : ""}
+                            {p.name}
+                            {suggestion && ` · 필요 ${suggestion.required_quantity == null ? "작업 시 수량 확인" : `${String(suggestion.required_quantity)} ${p.unit}`}`}
+                            {admin ? ` · 재고 ${String(p.quantity)} ${p.unit}` : ` · ${p.sku} · ${p.unit}`}
                             <input
-                            name={p.id}
-                            type="number"
-                            min={p.unit === "EA" ? "1" : "0.001"}
-                            max="99999999999.999"
-                            step={p.unit === "EA" ? "1" : "0.001"}
-                            placeholder="사용 수량"
-                          />
+                              name={p.id}
+                              type="number"
+                              min={p.unit === "EA" ? "1" : "0.001"}
+                              max="99999999999.999"
+                              step={p.unit === "EA" ? "1" : "0.001"}
+                              placeholder="사용 수량"
+                            />
+                            {suggestion?.required_quantity != null && (
+                              <button
+                                type="button"
+                                className="inline-link part-quantity-fill"
+                                onClick={(event) => {
+                                  const input = event.currentTarget.parentElement?.querySelector("input[type='number']") as HTMLInputElement | null;
+                                  if (input) input.value = String(suggestion.required_quantity);
+                                }}
+                              >
+                                필요량 입력
+                              </button>
+                            )}
                           </label>
-                        ))}
+                          );
+                        })}
                       <label>
                         사용 사유
                         <input name="reason" required maxLength={500} />
@@ -1300,8 +1360,8 @@ export function WorkOrders({
                     </fieldset>
                   </form>
                 )}
-                <h3>부품 사용·반환 이력</h3>
-                <p>
+                <h3 className="parts-history-heading">부품 사용·반환 이력</h3>
+                <p className="parts-history-help">
                   취소 시 자동 복원되지 않습니다. 실제 회수한 미사용 부품만 반환
                   처리하세요.
                 </p>
@@ -1355,15 +1415,9 @@ export function WorkOrders({
                       )}
                   </article>
                 ))}
-                {!detail.movements.length && <p>부품 사용 내역이 없습니다.</p>}
-                <h3>작업 이력</h3>
-                <ol>
-                  {detail.events.map((e, i) => (
-                    <li key={i}>
-                      {localTime(e.created_at)} · {e.detail}
-                    </li>
-                  ))}
-                </ol>
+                {!detail.movements.length && <p className="parts-history-empty">부품 사용 내역이 없습니다.</p>}
+                </aside>
+                </div>
               </div>
             ) : (
               <p>

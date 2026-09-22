@@ -463,14 +463,15 @@ public class WorkService {
                   r.appointmentId()))
             db.update(
                 "INSERT INTO work_order_items"
-                    + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes,status,done) VALUES"
-                    + " (?,?,?,?,?,?,?,FALSE)",
+                    + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes,quantity,status,done) VALUES"
+                    + " (?,?,?,?,?,?,?,?,FALSE)",
                 UUID.randomUUID(),
                 work,
                 item.get("service_item_id"),
                 item.get("name"),
                 item.get("labor_price"),
                 item.get("duration_minutes"),
+                item.get("quantity"),
                 "PENDING");
           db.update(
               "UPDATE vehicles SET mileage=?,updated_at=? WHERE id=?",
@@ -528,15 +529,37 @@ public class WorkService {
         hideInternalCosts(
             clean(one("SELECT * FROM work_orders WHERE id=? AND mechanic_id=?", work, mechanic)));
     var detail = detail(result, work, false);
-    detail.put(
-        "suggested_parts",
+    detail.put("suggested_parts", suggestedParts(work));
+    return detail;
+  }
+
+  private List<Map<String, Object>> suggestedParts(UUID work) {
+    var snapshot =
+        rows(
+            """
+SELECT p.id,p.name,p.unit,
+  CASE WHEN COUNT(aip.total_quantity)=COUNT(*) THEN SUM(aip.total_quantity) ELSE NULL END AS required_quantity
+FROM work_orders w
+JOIN appointment_item_parts aip ON aip.appointment_id=w.appointment_id
+JOIN parts p ON p.id=aip.part_id
+WHERE w.id=?
+GROUP BY p.id,p.name,p.unit
+ORDER BY p.name,p.id
+""",
+            work);
+    var byId = new LinkedHashMap<UUID, Map<String, Object>>();
+    snapshot.forEach(part -> byId.put(id(part, "id"), part));
+    for (var part :
         rows(
             "SELECT DISTINCT p.id,p.name,p.unit FROM"
                 + " service_part_requirements r JOIN work_order_items i ON"
                 + " i.service_item_id=r.service_id JOIN parts p ON p.id=r.part_id WHERE"
-                + " i.work_order_id=? ORDER BY p.name",
-            work));
-    return detail;
+                + " i.work_order_id=? ORDER BY p.name,p.id",
+            work)) {
+      part.put("required_quantity", null);
+      byId.putIfAbsent(id(part, "id"), part);
+    }
+    return new ArrayList<>(byId.values());
   }
 
   public Map<String, Object> shortage(
@@ -792,6 +815,38 @@ public class WorkService {
   public Map<String, Object> mechanicItem(
       UUID actor, UUID mechanic, UUID key, UUID work, UUID item, ItemState r) {
     return item(actor, mechanic, key, work, item, r, false);
+  }
+
+  public Map<String, Object> completeAllItems(String email, UUID key, UUID work) {
+    return completeAllItems(actor(email, true), null, key, work, true);
+  }
+
+  public Map<String, Object> mechanicCompleteAllItems(
+      UUID actor, UUID mechanic, UUID key, UUID work) {
+    return completeAllItems(actor, mechanic, key, work, false);
+  }
+
+  private Map<String, Object> completeAllItems(
+      UUID actor, UUID mechanic, UUID key, UUID work, boolean adminResponse) {
+    return command(
+        actor,
+        key,
+        "items-complete-all/" + work,
+        Map.of("workOrderId", work),
+        () -> {
+          var order = mutationWork(work, actor, mechanic);
+          editable(order);
+          if (!"IN_PROGRESS".equals(order.get("status")))
+            throw conflict("진행 중인 작업에서 정비 항목을 일괄 완료해 주세요.");
+          int changed =
+              db.update(
+                  "UPDATE work_order_items SET status='COMPLETED',done=TRUE,skip_reason=NULL"
+                      + " WHERE work_order_id=? AND status IN ('PENDING','IN_PROGRESS')",
+                  work);
+          if (changed > 0) event(work, actor, "ITEM_BULK", "정비 항목 일괄 완료 · " + changed + "건");
+          return mutationDetail(work, adminResponse);
+        },
+        mechanic == null ? null : () -> lockMechanicWork(work, actor, mechanic));
   }
 
   private Map<String, Object> item(

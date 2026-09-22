@@ -87,6 +87,7 @@ class PhaseThreeIntegrationTest {
     db.update("DELETE FROM work_orders");
     db.update("DELETE FROM stock_operations");
     db.update("DELETE FROM mechanics");
+    db.update("DELETE FROM appointment_item_parts");
     db.update("DELETE FROM parts");
     db.update("DELETE FROM slot_allocations");
     db.update("DELETE FROM appointment_items");
@@ -808,6 +809,156 @@ class PhaseThreeIntegrationTest {
         Map.of("mechanicId", actor.mechanicId()));
     mvc.perform(get("/api/mechanic/work-orders/" + work).with(user(actor.email()).roles("MECHANIC")))
         .andExpect(status().isOk());
+  }
+
+  @Test
+  void receiveKeepsBookedQuantityAndMechanicUsesAggregatedPartSnapshot() throws Exception {
+    var actor = assignedMechanic("snapshot-mechanic@example.com");
+    UUID tire = part("SNAPSHOT-TIRE", "8");
+    db.update(
+        "INSERT INTO service_part_requirements"
+            + " (service_id,part_id,required_quantity,quantity_confirmed) VALUES (?,?,1,TRUE)",
+        serviceItem,
+        tire);
+    db.update(
+        "UPDATE appointment_items SET quantity=4,parts_quote_captured=TRUE WHERE appointment_id=?",
+        appointment);
+    db.update(
+        "INSERT INTO appointment_item_parts"
+            + " (appointment_id,service_item_id,part_id,part_name,unit,required_quantity_per_service,total_quantity,unit_price,amount,charge_policy)"
+            + " VALUES (?,?,?,?,?,1,4,10000,40000,'STANDARD')",
+        appointment,
+        serviceItem,
+        tire,
+        "예약 타이어",
+        "L");
+
+    UUID secondService = UUID.randomUUID();
+    db.update(
+        "INSERT INTO service_items"
+            + " (id,name,description,labor_price,duration_minutes,active,created_at,updated_at)"
+            + " VALUES (?,?,?,10000,30,TRUE,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        secondService,
+        "타이어 추가 점검",
+        "설명");
+    db.update(
+        "INSERT INTO appointment_items"
+            + " (appointment_id,service_item_id,name,labor_price,duration_minutes,quantity,parts_quote_captured)"
+            + " VALUES (?,?,?,10000,30,2,TRUE)",
+        appointment,
+        secondService,
+        "타이어 추가 점검");
+    db.update(
+        "INSERT INTO appointment_item_parts"
+            + " (appointment_id,service_item_id,part_id,part_name,unit,required_quantity_per_service,total_quantity,unit_price,amount,charge_policy)"
+            + " VALUES (?,?,?,?,?,1,2,10000,20000,'STANDARD')",
+        appointment,
+        secondService,
+        tire,
+        "예약 타이어",
+        "L");
+
+    UUID work = work(appointment);
+    assertThat(
+            db.queryForObject(
+                "SELECT quantity FROM work_order_items WHERE work_order_id=? AND service_item_id=?",
+                Integer.class,
+                work,
+                serviceItem))
+        .isEqualTo(4);
+    mvc.perform(get("/api/mechanic/work-orders/" + work).with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.suggested_parts[0].id").value(tire.toString()))
+        .andExpect(jsonPath("$.suggested_parts[0].required_quantity").value(6));
+  }
+
+  @Test
+  void bulkCompleteKeepsSkippedItemsAndEnforcesMechanicOwnership() throws Exception {
+    var actor = assignedMechanic("bulk-mechanic@example.com");
+    UUID own = work(appointment);
+    ok("PATCH", "/api/admin/work-orders/" + own + "/status", Map.of("status", "IN_PROGRESS"));
+    UUID pending =
+        db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, own);
+    db.update("UPDATE work_order_items SET status='IN_PROGRESS' WHERE id=?", pending);
+    UUID anotherPending = UUID.randomUUID();
+    UUID waiting = UUID.randomUUID();
+    UUID skipped = UUID.randomUUID();
+    UUID pendingService = UUID.randomUUID();
+    UUID waitingService = UUID.randomUUID();
+    UUID skippedService = UUID.randomUUID();
+    for (UUID extraService : List.of(pendingService, waitingService, skippedService)) {
+      db.update(
+          "INSERT INTO service_items"
+              + " (id,name,description,labor_price,duration_minutes,active,created_at,updated_at)"
+              + " VALUES (?,?,?,1000,30,TRUE,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+          extraService,
+          "일괄 완료 테스트 " + extraService,
+          "설명");
+    }
+    db.update(
+        "INSERT INTO work_order_items"
+            + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes,status,done,quantity)"
+            + " VALUES (?,?,?,?,?,?,'PENDING',FALSE,1)",
+        anotherPending, own, pendingService, "대기 항목", 1000, 30);
+    db.update(
+        "INSERT INTO work_order_items"
+            + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes,status,done,quantity)"
+            + " VALUES (?,?,?,?,?,?, 'WAITING_PARTS',FALSE,1)",
+        waiting, own, waitingService, "대기 부품 항목", 1000, 30);
+    db.update(
+        "INSERT INTO work_order_items"
+            + " (id,work_order_id,service_item_id,name,labor_price,duration_minutes,status,done,skip_reason,quantity)"
+            + " VALUES (?,?,?,?,?,?,'SKIPPED',FALSE,'고객 제외',1)",
+        skipped, own, skippedService, "건너뜀 항목", 1000, 30);
+
+    String path = "/api/mechanic/work-orders/" + own + "/items/complete-all";
+    UUID key = UUID.randomUUID();
+    mechanicOk("POST", path, Map.of(), key, actor.email());
+    mechanicOk("POST", path, Map.of(), key, actor.email());
+    assertThat(db.queryForObject("SELECT status FROM work_order_items WHERE id=?", String.class, pending))
+        .isEqualTo("COMPLETED");
+    assertThat(db.queryForObject("SELECT status FROM work_order_items WHERE id=?", String.class, anotherPending))
+        .isEqualTo("COMPLETED");
+    assertThat(db.queryForObject("SELECT status FROM work_order_items WHERE id=?", String.class, waiting))
+        .isEqualTo("WAITING_PARTS");
+    assertThat(db.queryForObject("SELECT status FROM work_order_items WHERE id=?", String.class, skipped))
+        .isEqualTo("SKIPPED");
+    assertThat(
+            db.queryForObject(
+                "SELECT COUNT(*) FROM work_order_events WHERE work_order_id=? AND event_type='ITEM_BULK'",
+                Integer.class,
+                own))
+        .isOne();
+
+    UUID otherMechanic = mechanicAccount("bulk-other@example.com", "BULK-OTHER", true);
+    UUID other = work(appointment());
+    db.update("UPDATE work_orders SET mechanic_id=? WHERE id=?", otherMechanic, other);
+    assertThat(
+            mechanicRequest(
+                    "POST",
+                    "/api/mechanic/work-orders/" + other + "/items/complete-all",
+                    Map.of(),
+                    UUID.randomUUID(),
+                    actor.email())
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+  }
+
+  @Test
+  void customerPartsGuideIsSafeAndExcludesInactiveParts() throws Exception {
+    UUID visible = part("GUIDE-VISIBLE", "2");
+    UUID hidden = part("GUIDE-HIDDEN", "3");
+    db.update("UPDATE parts SET active=FALSE WHERE id=?", hidden);
+    mvc.perform(get("/api/parts-guide").with(user("work-customer@example.com").roles("CUSTOMER")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[?(@.id == '" + visible + "')].sku").exists())
+        .andExpect(jsonPath("$[?(@.id == '" + hidden + "')]").doesNotExist())
+        .andExpect(jsonPath("$[0].quantity").doesNotExist())
+        .andExpect(jsonPath("$[0].minimum_quantity").doesNotExist())
+        .andExpect(jsonPath("$[0].unit_price").doesNotExist());
+    mvc.perform(get("/api/parts-guide").with(user(admin).roles("ADMIN")))
+        .andExpect(status().isForbidden());
   }
 
   @Test

@@ -352,6 +352,66 @@ ORDER BY u.id
 
   private record ProviderReservation(Map<String, Object> order, boolean claimed) {}
 
+  public Map<String, Object> abandonToss(
+      String email, UUID key, UUID invoice, String orderId) {
+    return abandonToss(email, key, invoice, orderId, false);
+  }
+
+  public Map<String, Object> abandonTossForAdmin(
+      String email, UUID key, UUID invoice, String orderId) {
+    return abandonToss(email, key, invoice, orderId, true);
+  }
+
+  private Map<String, Object> abandonToss(
+      String email, UUID key, UUID invoice, String orderId, boolean admin) {
+    Supplier<Map<String, Object>> action =
+        () -> {
+          var orders =
+              admin
+                  ? db.queryForList(
+                      "SELECT po.* FROM payment_provider_orders po"
+                          + " WHERE po.provider_order_id=? AND po.invoice_id=? FOR UPDATE",
+                      orderId,
+                      invoice)
+                  : db.queryForList(
+                      "SELECT po.* FROM payment_provider_orders po"
+                          + " JOIN invoices i ON i.id=po.invoice_id"
+                          + " JOIN work_orders w ON w.id=i.work_order_id"
+                          + " JOIN users u ON u.id=w.customer_id"
+                          + " WHERE po.provider_order_id=? AND po.invoice_id=? AND u.email=? FOR UPDATE",
+                      orderId,
+                      invoice,
+                      email);
+          if (orders.isEmpty()) {
+            var invoiceRow = one("SELECT work_order_id FROM invoices WHERE id=?", invoice);
+            ownedWork(email, id(invoiceRow, "work_order_id"), admin);
+            return Map.of("invoiceId", invoice, "orderId", orderId, "abandoned", true);
+          }
+          var order = orders.get(0);
+          if (!"READY".equals(order.get("status"))
+              || order.get("provider_payment_key") != null
+              || order.get("payment_record_id") != null
+              || order.get("approved_at") != null) {
+            throw conflict("이미 승인 처리 중이거나 완료된 결제 주문은 중단할 수 없습니다.");
+          }
+          db.update("DELETE FROM payment_provider_orders WHERE id=?", order.get("id"));
+          return Map.of("invoiceId", invoice, "orderId", orderId, "abandoned", true);
+        };
+    return admin
+        ? work.billingCommand(
+            email,
+            key,
+            "toss-abandon/" + orderId,
+            Map.of("invoiceId", invoice, "orderId", orderId),
+            action)
+        : work.customerBillingCommand(
+            email,
+            key,
+            "toss-abandon/" + orderId,
+            Map.of("invoiceId", invoice, "orderId", orderId),
+            action);
+  }
+
   public Map<String, Object> confirmToss(String email, UUID key, TossConfirm request) {
     return confirmToss(email, key, request, false);
   }

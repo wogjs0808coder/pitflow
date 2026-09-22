@@ -804,6 +804,129 @@ class PhaseFourIntegrationTest {
   }
 
   @Test
+  void readyTossAttemptCanBeAbandonedSafelyAndThenPaidAnotherWay() throws Exception {
+    BilledWork billed = billedWork();
+    JsonNode first = prepareToss(billed.invoice(), UUID.randomUUID());
+    String firstOrder = first.get("orderId").asText();
+    String abandonPath =
+        "/api/billing/invoices/" + billed.invoice() + "/toss/orders/" + firstOrder;
+    UUID abandonKey = UUID.randomUUID();
+
+    assertThat(
+            request(
+                    "DELETE",
+                    abandonPath,
+                    Map.of(),
+                    abandonKey,
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    assertThat(
+            request(
+                    "DELETE",
+                    abandonPath,
+                    Map.of(),
+                    UUID.randomUUID(),
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    assertThat(
+            request(
+                    "DELETE",
+                    abandonPath,
+                    Map.of(),
+                    abandonKey,
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    assertThat(count("payment_provider_orders WHERE invoice_id='" + billed.invoice() + "'"))
+        .isZero();
+    assertThat(status(payPath(billed.invoice().toString()), payment("CASH", 20000), UUID.randomUUID()))
+        .isEqualTo(200);
+
+    BilledWork retry = billedWork();
+    JsonNode abandoned = prepareToss(retry.invoice(), UUID.randomUUID());
+    assertThat(
+            request(
+                    "DELETE",
+                    "/api/admin/billing/invoices/"
+                        + retry.invoice()
+                        + "/toss/orders/"
+                        + abandoned.get("orderId").asText(),
+                    Map.of(),
+                    UUID.randomUUID(),
+                    admin,
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(200);
+    JsonNode replacement = prepareToss(retry.invoice(), UUID.randomUUID());
+    assertThat(replacement.get("orderId").asText()).isNotEqualTo(abandoned.get("orderId").asText());
+
+    users.saveAndFlush(
+        new AppUser("other-customer@example.com", "test-hash", "다른 고객", AppUser.Role.CUSTOMER));
+    String replacementPath =
+        "/api/billing/invoices/"
+            + retry.invoice()
+            + "/toss/orders/"
+            + replacement.get("orderId").asText();
+    assertThat(
+            request(
+                    "DELETE",
+                    replacementPath,
+                    Map.of(),
+                    UUID.randomUUID(),
+                    "other-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(404);
+
+    db.update(
+        "UPDATE payment_provider_orders SET status='CONFIRMING',provider_payment_key='claim'"
+            + " WHERE provider_order_id=?",
+        replacement.get("orderId").asText());
+    assertThat(
+            request(
+                    "DELETE",
+                    replacementPath,
+                    Map.of(),
+                    UUID.randomUUID(),
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+
+    BilledWork completed = billedWork();
+    TossCycle done =
+        confirmToss(
+            completed.invoice(),
+            prepareToss(completed.invoice(), UUID.randomUUID()),
+            "abandon_done");
+    assertThat(
+            request(
+                    "DELETE",
+                    "/api/billing/invoices/"
+                        + completed.invoice()
+                        + "/toss/orders/"
+                        + done.orderId(),
+                    Map.of(),
+                    UUID.randomUUID(),
+                    "work-customer@example.com",
+                    true)
+                .getResponse()
+                .getStatus())
+        .isEqualTo(409);
+  }
+
+  @Test
   void tossRefundAllowsCashOrTransferWithoutCreatingProviderOrder() throws Exception {
     for (String method : List.of("CASH", "TRANSFER")) {
       BilledWork billed = billedWork();

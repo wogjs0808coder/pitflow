@@ -29,6 +29,31 @@ public class CatalogService {
         .stream().map(this::view).toList();
   }
 
+  public List<Map<String, Object>> partsGuide(String email) {
+    String role =
+        db.queryForObject("SELECT role FROM users WHERE email=?", String.class, email);
+    if (!"CUSTOMER".equals(role)) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "고객 계정으로 이용해 주세요.");
+    }
+    var parts =
+        db.queryForList(
+            "SELECT id,sku,name,description,unit FROM parts"
+                + " WHERE active=TRUE AND archived=FALSE ORDER BY name,id");
+    for (var part : parts) {
+      part.put(
+          "services",
+          db.queryForList(
+                  "SELECT s.name FROM service_part_requirements r"
+                      + " JOIN service_items s ON s.id=r.service_id"
+                      + " WHERE r.part_id=? AND s.active=TRUE ORDER BY s.name,s.id",
+                  part.get("id"))
+              .stream()
+              .map(row -> row.get("name"))
+              .toList());
+    }
+    return parts;
+  }
+
   @Transactional
   public ServiceView create(ServiceRequest r) {
     var item = items.saveAndFlush(new ServiceItem(r));

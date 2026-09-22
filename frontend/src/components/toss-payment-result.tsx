@@ -14,11 +14,40 @@ type Props = {
 };
 
 export function TossPaymentResult({ invoiceId, paymentKey, orderId, amount, failure, admin = false }: Props) {
-  const [state, setState] = useState<"confirming" | "done" | "failed">(failure ? "failed" : "confirming");
-  const [message, setMessage] = useState(failure ?? "결제 승인을 확인하고 있습니다…");
+  const [state, setState] = useState<"confirming" | "done" | "failed">("confirming");
+  const [message, setMessage] = useState(failure ? "중단된 결제 시도를 정리하고 있습니다…" : "결제 승인을 확인하고 있습니다…");
 
   useEffect(() => {
-    if (failure || !invoiceId || !paymentKey || !orderId || !amount) return;
+    if (failure) {
+      if (!invoiceId || !orderId) {
+        setState("failed");
+        setMessage(failure);
+        return;
+      }
+      const storageKey = `pitflow:toss-abandon:${orderId}`;
+      let key = sessionStorage.getItem(storageKey);
+      if (!key) {
+        key = crypto.randomUUID();
+        sessionStorage.setItem(storageKey, key);
+      }
+      api(
+        admin
+          ? `/api/admin/billing/invoices/${invoiceId}/toss/orders/${encodeURIComponent(orderId)}`
+          : `/api/billing/invoices/${invoiceId}/toss/orders/${encodeURIComponent(orderId)}`,
+        { method: "DELETE", headers: { "Idempotency-Key": key } },
+      )
+        .then(() => {
+          sessionStorage.removeItem(storageKey);
+          setState("failed");
+          setMessage(`${failure} 다른 결제 방법을 선택하거나 다시 시도할 수 있습니다.`);
+        })
+        .catch((reason) => {
+          setState("failed");
+          setMessage(errorText(reason));
+        });
+      return;
+    }
+    if (!invoiceId || !paymentKey || !orderId || !amount) return;
     const storageKey = `pitflow:toss-confirm:${orderId}`;
     let key = sessionStorage.getItem(storageKey);
     if (!key) {

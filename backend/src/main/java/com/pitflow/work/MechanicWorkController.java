@@ -49,6 +49,15 @@ public class MechanicWorkController {
     return work.mechanicItem(identity.userId(), identity.mechanicId(), key, id, itemId, request);
   }
 
+  @PostMapping("/{id}/items/complete-all")
+  public Object completeAllItems(
+      Principal principal,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id) {
+    var identity = identities.requireActive(principal.getName());
+    return work.mechanicCompleteAllItems(identity.userId(), identity.mechanicId(), key, id);
+  }
+
   @PostMapping("/{id}/parts/use")
   public Object use(
       Principal principal,

@@ -63,6 +63,15 @@ public class AdminBillingController {
     return s.confirmTossForAdmin(p.getName(), key, request);
   }
 
+  @DeleteMapping("/invoices/{id}/toss/orders/{orderId}")
+  public Object abandonToss(
+      Principal p,
+      @PathVariable UUID id,
+      @PathVariable String orderId,
+      @RequestHeader("Idempotency-Key") UUID key) {
+    return s.abandonTossForAdmin(p.getName(), key, id, orderId);
+  }
+
   @PostMapping("/invoices/{id}/void")
   public Object cancel(
       Principal p,

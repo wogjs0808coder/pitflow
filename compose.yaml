@@ -22,6 +22,9 @@ services:
       PITFLOW_ADMIN_EMAIL: ${PITFLOW_ADMIN_EMAIL:-}
       PITFLOW_ADMIN_PASSWORD: ${PITFLOW_ADMIN_PASSWORD:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TOSS_CLIENT_KEY: ${TOSS_CLIENT_KEY:-}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:-}
+      TOSS_API_BASE_URL: ${TOSS_API_BASE_URL:-https://api.tosspayments.com}
     ports: ["127.0.0.1:8081:8080"]
     depends_on:
       db:

@@ -37,4 +37,13 @@ public class BillingController {
       @Valid @RequestBody BillingRequests.TossConfirm request) {
     return s.confirmToss(p.getName(), key, request);
   }
+
+  @DeleteMapping("/invoices/{id}/toss/orders/{orderId}")
+  public Object abandonToss(
+      Principal p,
+      @PathVariable UUID id,
+      @PathVariable String orderId,
+      @RequestHeader("Idempotency-Key") UUID key) {
+    return s.abandonToss(p.getName(), key, id, orderId);
+  }
 }

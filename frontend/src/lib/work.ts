@@ -115,6 +115,7 @@ export type Work = {
   status: WorkStatus;
   notes: string;
   received_at: string;
+  completed_at?: string | null;
   released_at: string | null;
 };
 
@@ -137,10 +138,10 @@ export type WorkDetail = Work & {
 
   movements: Movement[];
 
-  suggested_parts?: Pick<
+  suggested_parts?: (Pick<
     Part,
     "id" | "name" | "quantity" | "unit" | "active"
-  >[];
+  > & { required_quantity?: Decimal | null })[];
 };
 
 export const localTime = (value: string) =>
