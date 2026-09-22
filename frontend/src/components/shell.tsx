@@ -12,6 +12,7 @@ import {
   LogOut,
   ArrowUpRight,
   BadgeDollarSign,
+  PackageSearch,
 } from "lucide-react";
 
 import { useAuth } from "./auth-provider";
@@ -79,6 +80,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
           href: "/work-orders",
           label: "내 정비 작업",
           icon: Wrench,
+        },
+        {
+          href: "/parts-guide",
+          label: "정비 부품 안내",
+          icon: PackageSearch,
         },
         {
           href: "/history",

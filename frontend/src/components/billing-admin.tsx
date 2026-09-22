@@ -58,6 +58,7 @@ export function BillingAdmin() {
   const [revision, setRevision] = useState(0);
   const [confirmZero, setConfirmZero] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState("");
+  const [tab, setTab] = useState<"work" | "outstanding" | "all">("work");
   const reload = useCallback(async () => setRevision((value) => value + 1), []);
   const command = useWorkCommand(reload);
 
@@ -65,7 +66,10 @@ export function BillingAdmin() {
     const query = new URLSearchParams(window.location.search);
     const invoiceId = query.get("invoiceId");
     const workOrderId = query.get("workOrderId");
-    if (invoiceId) setSelectedInvoice(invoiceId);
+    if (invoiceId) {
+      setSelectedInvoice(invoiceId);
+      setTab("all");
+    }
     else if (workOrderId) setSelectedWork(workOrderId);
   }, []);
 
@@ -156,13 +160,31 @@ export function BillingAdmin() {
 
   if (user?.role !== "ADMIN")
     return <p role="alert">관리자만 이용할 수 있습니다.</p>;
-  const disabled = command.blocked || loading || !!error;
+  const disabled = command.blocked || loading;
   const issueable = orders.filter(
     (order) =>
       !invoices.some(
         (invoice) =>
           invoice.work_order_id === order.id && invoice.status === "OPEN",
       ),
+  ).sort((a, b) =>
+    new Date(a.completed_at ?? a.received_at).getTime() -
+    new Date(b.completed_at ?? b.received_at).getTime(),
+  );
+  const outstandingInvoices = invoices
+    .filter(
+      (invoice) =>
+        invoice.status === "OPEN" &&
+        decimalNumber(invoice.total) - decimalNumber(invoice.paid) > 0,
+    )
+    .sort((a, b) => new Date(a.issued_at).getTime() - new Date(b.issued_at).getTime());
+  const issuedInvoices = [...invoices].sort(
+    (a, b) => new Date(b.issued_at).getTime() - new Date(a.issued_at).getTime(),
+  );
+  const outstandingTotal = outstandingInvoices.reduce(
+    (sum, invoice) =>
+      sum + decimalNumber(invoice.total) - decimalNumber(invoice.paid),
+    0,
   );
 
   return (
@@ -190,6 +212,12 @@ export function BillingAdmin() {
           {error}
         </div>
       )}
+
+      <section className="billing-workspace-summary" aria-label="정산 업무 요약">
+        <div><span>정산 대기</span><strong>{issueable.length}건</strong></div>
+        <div><span>미수</span><strong>{outstandingInvoices.length}건 · {won(outstandingTotal)}</strong></div>
+        <div><span>발행 명세</span><strong>{invoices.length}건</strong></div>
+      </section>
 
       <section className="work-panel">
         <h2>운영 현황</h2>
@@ -251,13 +279,13 @@ export function BillingAdmin() {
 
       <div className="work-layout">
         <section>
-          <div className="section-heading">
-            <h2>완료 작업 정산</h2>
-            <span className="count-label">미발행 {issueable.length}건</span>
+          <div className="management-tabs billing-tabs" aria-label="정산 목록">
+            <button className={tab === "work" ? "button primary" : "button secondary"} onClick={() => setTab("work")}>완료 작업 정산 · {issueable.length}</button>
+            <button className={tab === "outstanding" ? "button primary" : "button secondary"} onClick={() => setTab("outstanding")}>미수 명세 · {outstandingInvoices.length}</button>
+            <button className={tab === "all" ? "button primary" : "button secondary"} onClick={() => setTab("all")}>발행된 정산 명세 · {invoices.length}</button>
           </div>
-          {loading ? (
-            <p role="status">완료 작업을 불러오는 중입니다…</p>
-          ) : issueable.length ? (
+          {loading ? <p role="status">정산 목록을 불러오는 중입니다…</p> : null}
+          {!loading && tab === "work" && (issueable.length ? (
             issueable.map((order) => (
               <button
                 key={order.id}
@@ -284,13 +312,11 @@ export function BillingAdmin() {
             ))
           ) : (
             <p className="empty-state">정산할 완료 작업이 없습니다.</p>
-          )}
-
-          <div className="section-heading">
-            <h2>발행된 정산 명세</h2>
-            <span className="count-label">{invoices.length}건</span>
-          </div>
-          {invoices.map((invoice) => (
+          ))}
+          {!loading && tab !== "work" && (tab === "outstanding" ? outstandingInvoices : issuedInvoices).map((invoice) => {
+            const balance = decimalNumber(invoice.total) - decimalNumber(invoice.paid);
+            const statusText = invoice.status === "VOID" ? "취소" : balance > 0 ? "미수" : "완납";
+            return (
             <button
               key={invoice.id}
               className={`work-panel work-select ${selectedInvoice === invoice.id ? "selected-work" : ""}`}
@@ -302,7 +328,7 @@ export function BillingAdmin() {
               disabled={command.busy}
             >
               <span className="eyebrow">
-                {invoice.status === "OPEN" ? "유효 명세" : "취소 명세"}
+                {statusText}
               </span>
               <strong>
                 {invoice.vehicle_label} · {invoice.plate_number}
@@ -311,9 +337,11 @@ export function BillingAdmin() {
                 {localTime(invoice.issued_at)} ·{" "}
                 {won(decimalNumber(invoice.total))}
               </span>
-              <span>수납 {won(decimalNumber(invoice.paid))}</span>
+              <span>총액 {won(decimalNumber(invoice.total))} · 수납 {won(decimalNumber(invoice.paid))}</span>
+              <strong className="billing-balance">남은 결제 {won(Math.max(0, balance))}</strong>
             </button>
-          ))}
+          )})}
+          {!loading && tab === "outstanding" && !outstandingInvoices.length && <p className="empty-state">미수 명세가 없습니다.</p>}
         </section>
 
         <section>

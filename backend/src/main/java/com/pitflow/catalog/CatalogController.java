@@ -1,6 +1,7 @@
 package com.pitflow.catalog;
 
 import jakarta.validation.Valid;
+import java.security.Principal;
 import java.util.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -16,6 +17,11 @@ public class CatalogController {
   @GetMapping("/api/services")
   public List<ServiceView> list() {
     return catalog.list(false);
+  }
+
+  @GetMapping("/api/parts-guide")
+  public Object partsGuide(Principal principal) {
+    return catalog.partsGuide(principal.getName());
   }
 
   @GetMapping("/api/admin/services")
