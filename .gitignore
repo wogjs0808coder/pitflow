@@ -27,3 +27,6 @@ playwright-report/
 *.dump
 *.backup
 *.sql.gz
+
+# Local AI/Codex instructions
+AGENTS.md
