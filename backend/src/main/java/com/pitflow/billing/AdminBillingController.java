@@ -49,6 +49,20 @@ public class AdminBillingController {
     return s.collect(p.getName(), key, id, r);
   }
 
+  @PostMapping("/invoices/{id}/toss/orders")
+  public Object prepareToss(
+      Principal p, @PathVariable UUID id, @RequestHeader("Idempotency-Key") UUID key) {
+    return s.prepareTossForAdmin(p.getName(), key, id);
+  }
+
+  @PostMapping("/toss/confirm")
+  public Object confirmToss(
+      Principal p,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @Valid @RequestBody TossConfirm request) {
+    return s.confirmTossForAdmin(p.getName(), key, request);
+  }
+
   @PostMapping("/invoices/{id}/void")
   public Object cancel(
       Principal p,
@@ -65,6 +79,15 @@ public class AdminBillingController {
       @RequestHeader("Idempotency-Key") UUID key,
       @Valid @RequestBody Reason r) {
     return s.reverse(p.getName(), key, id, r);
+  }
+
+  @PostMapping("/payments/{id}/toss-refund")
+  public Object refundToss(
+      Principal p,
+      @PathVariable UUID id,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @Valid @RequestBody Reason r) {
+    return s.refundToss(p.getName(), key, id, r);
   }
 
   @GetMapping("/summary")

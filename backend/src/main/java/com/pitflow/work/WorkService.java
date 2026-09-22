@@ -198,6 +198,11 @@ public class WorkService {
     return command(email, key, "billing/" + scope, body, action);
   }
 
+  public Map<String, Object> customerBillingCommand(
+      String email, UUID key, String scope, Object body, Supplier<Map<String, Object>> action) {
+    return command(actor(email, false), key, "billing/" + scope, body, action, null);
+  }
+
   public List<Map<String, Object>> mechanics() {
     return rows("SELECT * FROM mechanics ORDER BY code");
   }
@@ -733,6 +738,14 @@ public class WorkService {
         () -> {
           var order = lockWork(work);
           if (!"COMPLETED".equals(order.get("status"))) throw conflict("정비 완료 후 출고 처리해 주세요.");
+          if (!db.queryForList(
+                  "SELECT i.id FROM invoices i WHERE i.work_order_id=? AND i.status='OPEN' AND ("
+                      + " i.total>(SELECT COALESCE(SUM(CASE WHEN p.kind='PAYMENT' THEN p.amount ELSE -p.amount END),0)"
+                      + " FROM payment_records p WHERE p.invoice_id=i.id)"
+                      + " OR EXISTS (SELECT 1 FROM payment_provider_orders po WHERE po.invoice_id=i.id"
+                      + " AND po.status='REFUNDING')) FOR UPDATE",
+                  work)
+              .isEmpty()) throw conflict("미수금 결제를 완료한 후 출고 처리해 주세요.");
           if (order.get("released_at") == null) {
             db.update("UPDATE work_orders SET released_at=? WHERE id=?", now(), work);
             event(work, actor(email, true), "RELEASED", "차량 출고 완료");
@@ -1093,6 +1106,87 @@ public class WorkService {
             else consumeCostLots(movement, part, delta.abs());
           }
           return operation(key);
+        });
+  }
+
+  public Map<String, Object> resolveInventoryCost(
+      String email, UUID key, UUID part, CostResolution r) {
+    BigDecimal amount = quantity(r.quantity());
+    BigDecimal unitCost = purchaseCost(r.unitCost());
+    return command(
+        email,
+        key,
+        "cost-resolution/" + part,
+        new CostResolution(amount, unitCost, r.reason()),
+        () -> {
+          var p = lockPart(part);
+          validateUnitQuantity(p, amount);
+          UUID admin = actor(email, true);
+          var lots =
+              db.queryForList(
+                  "SELECT * FROM inventory_cost_lots WHERE part_id=? AND cost_known=FALSE"
+                      + " AND remaining_quantity>0 ORDER BY received_at,id FOR UPDATE",
+                  part);
+          BigDecimal available =
+              lots.stream()
+                  .map(lot -> number(lot, "remaining_quantity"))
+                  .reduce(BigDecimal.ZERO, BigDecimal::add);
+          if (available.compareTo(amount) < 0)
+            throw conflict("원가 미확정 재고 수량보다 많이 확정할 수 없습니다.");
+          BigDecimal remaining = amount;
+          var resolved = new ArrayList<Map<String, Object>>();
+          for (var lot : lots) {
+            if (remaining.signum() == 0) break;
+            BigDecimal sourceRemaining = number(lot, "remaining_quantity");
+            BigDecimal quantity = sourceRemaining.min(remaining);
+            UUID resolution = UUID.randomUUID();
+            UUID knownLot = UUID.randomUUID();
+            db.update(
+                "UPDATE inventory_cost_lots SET remaining_quantity=? WHERE id=?",
+                sourceRemaining.subtract(quantity),
+                lot.get("id"));
+            db.update(
+                "INSERT INTO inventory_cost_resolutions"
+                    + " (id,operation_id,source_lot_id,part_id,resolved_quantity,resolved_unit_cost,actor_id,reason,created_at)"
+                    + " VALUES (?,?,?,?,?,?,?,?,?)",
+                resolution,
+                key,
+                lot.get("id"),
+                part,
+                quantity,
+                unitCost,
+                admin,
+                r.reason().strip(),
+                now());
+            db.update(
+                "INSERT INTO inventory_cost_lots"
+                    + " (id,part_id,source_movement_id,origin,original_quantity,remaining_quantity,purchase_unit_cost,cost_known,received_at,created_at,cost_resolution_id)"
+                    + " VALUES (?,?,NULL,?,?,?,?,TRUE,?,?,?)",
+                knownLot,
+                part,
+                lot.get("origin"),
+                quantity,
+                quantity,
+                unitCost,
+                lot.get("received_at"),
+                now(),
+                resolution);
+            resolved.add(
+                Map.of(
+                    "resolution_id", resolution,
+                    "source_lot_id", lot.get("id"),
+                    "quantity", quantity,
+                    "unit_cost", unitCost));
+            remaining = remaining.subtract(quantity);
+          }
+          return Map.of(
+              "operation_id", key,
+              "part_id", part,
+              "part_name", p.get("name"),
+              "resolved_quantity", amount,
+              "resolved_unit_cost", unitCost,
+              "resolved_value", amount.multiply(unitCost).setScale(0, RoundingMode.HALF_UP),
+              "resolutions", resolved);
         });
   }
 

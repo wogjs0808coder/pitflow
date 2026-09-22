@@ -13,10 +13,13 @@ import java.sql.Timestamp;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Supplier;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.*;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class BillingService {
@@ -25,6 +28,8 @@ public class BillingService {
   private final ObjectMapper json;
   private final Clock clock;
   private final TreasuryMutationService treasury;
+  private final TossPaymentGateway toss;
+  private final TransactionTemplate tx;
   private static final BigDecimal MAX = new BigDecimal("99999999999999");
 
   public BillingService(
@@ -32,12 +37,17 @@ public class BillingService {
       WorkService work,
       ObjectMapper json,
       Clock clock,
-      TreasuryMutationService treasury) {
+      TreasuryMutationService treasury,
+      TossPaymentGateway toss,
+      PlatformTransactionManager manager) {
     this.db = db;
     this.work = work;
     this.json = json;
     this.clock = clock;
     this.treasury = treasury;
+    this.toss = toss;
+    this.tx = new TransactionTemplate(manager);
+    this.tx.setTimeout(15);
   }
 
   private OffsetDateTime now() {
@@ -268,6 +278,255 @@ ORDER BY u.id
         invoice);
   }
 
+  public Map<String, Object> prepareToss(String email, UUID key, UUID invoice) {
+    return prepareToss(email, key, invoice, false);
+  }
+
+  public Map<String, Object> prepareTossForAdmin(String email, UUID key, UUID invoice) {
+    return prepareToss(email, key, invoice, true);
+  }
+
+  private Map<String, Object> prepareToss(
+      String email, UUID key, UUID invoice, boolean admin) {
+    if (!toss.configured())
+      throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Toss 테스트 결제가 설정되지 않았습니다.");
+    Supplier<Map<String, Object>> action =
+        () -> {
+          var i = lockInvoice(invoice);
+          var orderWork = ownedWork(email, id(i, "work_order_id"), admin);
+          if (!"OPEN".equals(i.get("status"))) throw conflict("취소된 명세는 결제할 수 없습니다.");
+          if (!i.get("source_hash").equals(quote(id(i, "work_order_id")).get("fingerprint")))
+            throw conflict("정비 내역이 변경되었습니다. 관리자에게 명세 재발행을 요청해 주세요.");
+          BigDecimal total = number(i, "total");
+          BigDecimal outstanding = total.subtract(paid(invoice));
+          if (total.signum() <= 0) throw conflict("0원 명세는 결제할 수 없습니다.");
+          if (outstanding.signum() <= 0) throw conflict("이미 수납한 명세입니다.");
+          if (outstanding.compareTo(total) != 0)
+            throw conflict("현재 정산은 남은 금액의 전액 수납만 지원합니다.");
+          UUID customer = id(orderWork, "customer_id");
+          var customerIdentity = one("SELECT email,name FROM users WHERE id=?", customer);
+          var existing =
+              db.queryForList(
+                  "SELECT * FROM payment_provider_orders WHERE invoice_id=?"
+                      + " AND status IN ('READY','CONFIRMING') ORDER BY created_at DESC,id DESC",
+                  invoice);
+          Map<String, Object> order;
+          if (existing.isEmpty()) {
+            String orderId = "pitflow_" + UUID.randomUUID().toString().replace("-", "");
+            String customerKey = "customer_" + customer.toString().replace("-", "");
+            UUID id = UUID.randomUUID();
+            db.update(
+                "INSERT INTO payment_provider_orders"
+                    + " (id,invoice_id,customer_id,provider,provider_order_id,customer_key,amount,status,created_at,updated_at)"
+                    + " VALUES (?,?,?,'TOSS',?,?,?,'READY',?,?)",
+                id, invoice, customer, orderId, customerKey, total, now(), now());
+            order = one("SELECT * FROM payment_provider_orders WHERE id=?", id);
+          } else {
+            order = existing.get(0);
+            if (!Set.of("READY", "CONFIRMING").contains(order.get("status").toString()))
+              throw conflict("이미 처리된 결제 주문입니다.");
+          }
+          return Map.of(
+              "clientKey", toss.clientKey(),
+              "invoiceId", invoice,
+              "orderId", order.get("provider_order_id"),
+              "customerKey", order.get("customer_key"),
+              "customerEmail", customerIdentity.get("email"),
+              "customerName", customerIdentity.get("name"),
+              "amount", outstanding,
+              "orderName", "PitFlow 정비 정산");
+        };
+    return (admin ? work.billingCommand(
+            email,
+            key,
+            "toss-order/" + invoice,
+            Map.of("invoiceId", invoice),
+            action)
+        : work.customerBillingCommand(
+        email,
+        key,
+        "toss-order/" + invoice,
+        Map.of("invoiceId", invoice),
+        action));
+  }
+
+  private record ProviderReservation(Map<String, Object> order, boolean claimed) {}
+
+  public Map<String, Object> confirmToss(String email, UUID key, TossConfirm request) {
+    return confirmToss(email, key, request, false);
+  }
+
+  public Map<String, Object> confirmTossForAdmin(
+      String email, UUID key, TossConfirm request) {
+    return confirmToss(email, key, request, true);
+  }
+
+  private Map<String, Object> confirmToss(
+      String email, UUID key, TossConfirm request, boolean admin) {
+    actor(email, admin);
+    ProviderReservation reservation =
+        tx.execute(
+            status -> {
+              var order =
+                  admin
+                      ? one(
+                          "SELECT po.* FROM payment_provider_orders po"
+                              + " WHERE po.provider_order_id=? AND po.invoice_id=? FOR UPDATE",
+                          request.orderId(), request.invoiceId())
+                      : one(
+                          "SELECT po.* FROM payment_provider_orders po"
+                              + " JOIN invoices i ON i.id=po.invoice_id"
+                              + " JOIN work_orders w ON w.id=i.work_order_id"
+                              + " JOIN users u ON u.id=w.customer_id"
+                              + " WHERE po.provider_order_id=? AND po.invoice_id=? AND u.email=? FOR UPDATE",
+                          request.orderId(), request.invoiceId(), email);
+              if (number(order, "amount").compareTo(request.amount()) != 0)
+                throw conflict("결제 금액이 명세 금액과 다릅니다.");
+              String state = order.get("status").toString();
+              if ("DONE".equals(state)) return new ProviderReservation(order, false);
+              if (!Set.of("READY", "CONFIRMING").contains(state))
+                throw conflict("결제할 수 없는 주문 상태입니다.");
+              boolean claimed = "READY".equals(state);
+              if (claimed)
+                db.update(
+                    "UPDATE payment_provider_orders SET status='CONFIRMING',provider_payment_key=?,updated_at=? WHERE id=?",
+                    request.paymentKey(), now(), order.get("id"));
+              else if (order.get("provider_payment_key") != null
+                  && !request.paymentKey().equals(order.get("provider_payment_key").toString()))
+                throw conflict("다른 결제 키로 처리 중인 주문입니다.");
+              order.put("provider_payment_key", request.paymentKey());
+              return new ProviderReservation(order, claimed);
+            });
+    if (reservation == null) throw new IllegalStateException("Missing payment reservation");
+    if ("DONE".equals(reservation.order().get("status")))
+      return detail(email, request.invoiceId(), admin);
+
+    TossPaymentGateway.Payment approved;
+    try {
+      approved =
+          reservation.claimed()
+              ? toss.confirm(request.paymentKey(), request.orderId(), request.amount())
+              : toss.lookup(request.paymentKey());
+    } catch (RuntimeException failure) {
+      try {
+        approved = toss.lookup(request.paymentKey());
+      } catch (RuntimeException lookupFailure) {
+        throw failure;
+      }
+    }
+    validateProviderPayment(approved, request.paymentKey(), request.orderId(), request.amount(), "DONE");
+    TossPaymentGateway.Payment result = approved;
+    Supplier<Map<String, Object>> action =
+        () -> {
+          var order = one("SELECT * FROM payment_provider_orders WHERE provider_order_id=? FOR UPDATE", request.orderId());
+          if ("DONE".equals(order.get("status"))) return detail(email, request.invoiceId(), admin);
+          var invoice = lockInvoice(request.invoiceId());
+          var orderWork = ownedWork(email, id(invoice, "work_order_id"), admin);
+          if (!"OPEN".equals(invoice.get("status"))) throw conflict("취소된 명세는 결제할 수 없습니다.");
+          BigDecimal outstanding = number(invoice, "total").subtract(paid(request.invoiceId()));
+          if (outstanding.signum() <= 0) throw conflict("이미 수납한 명세입니다.");
+          if (outstanding.compareTo(request.amount()) != 0)
+            throw conflict("결제 금액이 현재 미수금과 다릅니다.");
+          UUID payment = UUID.randomUUID();
+          UUID customer = id(orderWork, "customer_id");
+          db.update(
+              "INSERT INTO payment_records (id,invoice_id,operation_id,kind,amount,method,reference,reason,actor_id,created_at)"
+                  + " VALUES (?,?,?,'PAYMENT',?,'CARD',?,'Toss 테스트 결제',?,?)",
+              payment, request.invoiceId(), key, request.amount(), request.orderId(), customer, now());
+          treasury.changeOperating(request.amount(), "CUSTOMER_PAYMENT", "Toss 고객 결제",
+              "PAYMENT_RECORD", payment, customer);
+          db.update(
+              "UPDATE payment_provider_orders SET status='DONE',provider_payment_key=?,payment_record_id=?,approved_at=?,updated_at=? WHERE id=?",
+              result.paymentKey(), payment, now(), now(), order.get("id"));
+          return detail(email, request.invoiceId(), admin);
+        };
+    return admin
+        ? work.billingCommand(
+            email,
+            key,
+            "toss-confirm/" + request.orderId(),
+            request,
+            action)
+        : work.customerBillingCommand(
+        email,
+        key,
+        "toss-confirm/" + request.orderId(),
+        request,
+        action);
+  }
+
+  private void validateProviderPayment(
+      TossPaymentGateway.Payment payment, String paymentKey, String orderId, BigDecimal amount, String status) {
+    if (!paymentKey.equals(payment.paymentKey())
+        || !orderId.equals(payment.orderId())
+        || amount.compareTo(payment.totalAmount()) != 0
+        || !status.equals(payment.status()))
+      throw conflict("결제사 승인 정보가 요청한 명세와 일치하지 않습니다.");
+  }
+
+  public Map<String, Object> refundToss(String email, UUID key, UUID payment, Reason reason) {
+    Map<String, Object> order =
+        tx.execute(
+            status -> {
+              actor(email, true);
+              var row = one("SELECT * FROM payment_provider_orders WHERE payment_record_id=? FOR UPDATE", payment);
+              if ("CANCELED".equals(row.get("status"))) return row;
+              if (!Set.of("DONE", "REFUNDING").contains(row.get("status").toString()))
+                throw conflict("환불할 수 없는 결제 상태입니다.");
+              db.update("UPDATE payment_provider_orders SET status='REFUNDING',updated_at=? WHERE id=?", now(), row.get("id"));
+              return row;
+            });
+    if (order == null) throw new IllegalStateException("Missing refund reservation");
+    UUID invoice = id(order, "invoice_id");
+    if ("CANCELED".equals(order.get("status")))
+      return work.billingCommand(
+          email,
+          key,
+          "toss-refund/" + payment,
+          reason,
+          () -> {
+            throw conflict("이미 취소한 수납입니다.");
+          });
+    String paymentKey = order.get("provider_payment_key").toString();
+    TossPaymentGateway.Payment cancelled;
+    try {
+      cancelled = toss.cancel(paymentKey, reason.reason().strip(), key);
+    } catch (RuntimeException failure) {
+      try {
+        cancelled = toss.lookup(paymentKey);
+      } catch (RuntimeException lookupFailure) {
+        throw failure;
+      }
+    }
+    validateProviderPayment(cancelled, paymentKey, order.get("provider_order_id").toString(),
+        number(order, "amount"), "CANCELED");
+    return work.billingCommand(
+        email,
+        key,
+        "toss-refund/" + payment,
+        reason,
+        () -> {
+          var locked = one("SELECT * FROM payment_provider_orders WHERE payment_record_id=? FOR UPDATE", payment);
+          if ("CANCELED".equals(locked.get("status"))) return detail(email, invoice, true);
+          var original = one("SELECT * FROM payment_records WHERE id=? AND kind='PAYMENT'", payment);
+          lockInvoice(invoice);
+          if (!db.queryForList("SELECT id FROM payment_records WHERE original_payment_id=?", payment).isEmpty())
+            throw conflict("이미 취소한 수납입니다.");
+          UUID reversal = UUID.randomUUID();
+          UUID admin = actor(email, true);
+          db.update(
+              "INSERT INTO payment_records (id,invoice_id,operation_id,kind,original_payment_id,amount,method,reference,reason,actor_id,created_at)"
+                  + " VALUES (?,?,?,'REVERSAL',?,?,?,?,?,?,?)",
+              reversal, invoice, key, payment, original.get("amount"), original.get("method"),
+              original.get("reference"), reason.reason().strip(), admin, now());
+          treasury.changeOperating(number(original, "amount").negate(), "PAYMENT_REFUND",
+              "Toss 결제 취소: " + reason.reason().strip(), "PAYMENT_RECORD", reversal, admin);
+          db.update("UPDATE payment_provider_orders SET status='CANCELED',cancelled_at=?,updated_at=? WHERE id=?",
+              now(), now(), locked.get("id"));
+          return detail(email, invoice, true);
+        });
+  }
+
   public Map<String, Object> collect(String email, UUID key, UUID invoice, Payment r) {
     return work.billingCommand(
         email,
@@ -276,13 +535,20 @@ ORDER BY u.id
         r,
         () -> {
           var i = lockInvoice(invoice);
+          if (!db.queryForList(
+                  "SELECT id FROM payment_provider_orders WHERE invoice_id=? AND status IN ('READY','CONFIRMING','DONE','REFUNDING')",
+                  invoice)
+              .isEmpty()) throw conflict("Toss 결제 주문이 있어 현장 수납으로 처리할 수 없습니다.");
           if (!"OPEN".equals(i.get("status"))) throw conflict("취소된 명세는 수납할 수 없습니다.");
           if (!i.get("source_hash").equals(quote(id(i, "work_order_id")).get("fingerprint")))
             throw conflict("부품 반환으로 내역이 변경되었습니다. 명세를 취소하고 다시 발행해 주세요.");
           var total = number(i, "total");
           if (total.compareTo(r.expectedTotal()) != 0) throw conflict("확인한 금액과 명세 금액이 다릅니다.");
           if (total.signum() == 0) throw conflict("0원 명세에는 수납 기록이 필요하지 않습니다.");
-          if (paid(invoice).signum() != 0) throw conflict("이미 수납한 명세입니다.");
+          BigDecimal outstanding = total.subtract(paid(invoice));
+          if (outstanding.signum() <= 0) throw conflict("이미 수납한 명세입니다.");
+          if (outstanding.compareTo(total) != 0)
+            throw conflict("현재 정산은 남은 금액의 전액 수납만 지원합니다.");
           UUID payment = UUID.randomUUID();
           UUID actor = actor(email, true);
           db.update(
@@ -316,6 +582,8 @@ VALUES (?,?,?,'PAYMENT',?,?,?,'현장 수납 확인',?,?)
         "reverse/" + payment,
         r,
         () -> {
+          if (!db.queryForList("SELECT id FROM payment_provider_orders WHERE payment_record_id=?", payment).isEmpty())
+            throw conflict("Toss 결제는 결제사 환불 기능을 이용해 주세요.");
           var original =
               one("SELECT * FROM payment_records WHERE id=? AND kind='PAYMENT'", payment);
           UUID invoice = id(original, "invoice_id");
@@ -359,6 +627,10 @@ VALUES (?,?,?,'REVERSAL',?,?,?,?,?,?,?)
         r,
         () -> {
           var i = lockInvoice(invoice);
+          if (!db.queryForList(
+                  "SELECT id FROM payment_provider_orders WHERE invoice_id=? AND status IN ('READY','CONFIRMING','REFUNDING')",
+                  invoice)
+              .isEmpty()) throw conflict("처리 중인 Toss 결제 주문이 있습니다.");
           if (!"OPEN".equals(i.get("status"))) throw conflict("이미 취소한 명세입니다.");
           if (paid(invoice).signum() != 0) throw conflict("수납 취소 기록을 먼저 남겨 주세요.");
           db.update(
@@ -395,8 +667,10 @@ FROM invoices i JOIN work_orders w ON w.id=i.work_order_id WHERE i.id=?
     result.put(
         "payments",
         rows(
-            "SELECT id,kind,original_payment_id,amount,method,reference,reason,created_at FROM"
-                + " payment_records WHERE invoice_id=? ORDER BY created_at,id",
+            "SELECT p.id,p.kind,p.original_payment_id,p.amount,p.method,p.reference,p.reason,p.created_at,"
+                + "o.provider,o.status AS provider_status FROM payment_records p"
+                + " LEFT JOIN payment_provider_orders o ON o.payment_record_id=p.id"
+                + " WHERE p.invoice_id=? ORDER BY p.created_at,p.id",
             invoice));
     result.put("paid", paid(invoice));
     result.put("balance", number(result, "total").subtract(paid(invoice)));
@@ -449,8 +723,12 @@ FROM invoices i JOIN work_orders w ON w.id=i.work_order_id ORDER BY i.issued_at 
       w.put(
           "invoices",
           rows(
-              "SELECT id,status,total,issued_at FROM invoices WHERE work_order_id=? ORDER BY"
-                  + " issued_at DESC,id",
+              "SELECT i.id,i.status,i.total,i.issued_at,"
+                  + " COALESCE((SELECT SUM(CASE WHEN p.kind='PAYMENT' THEN p.amount ELSE -p.amount END)"
+                  + " FROM payment_records p WHERE p.invoice_id=i.id),0) AS paid,"
+                  + " i.total-COALESCE((SELECT SUM(CASE WHEN p.kind='PAYMENT' THEN p.amount ELSE -p.amount END)"
+                  + " FROM payment_records p WHERE p.invoice_id=i.id),0) AS balance"
+                  + " FROM invoices i WHERE i.work_order_id=? ORDER BY i.issued_at DESC,i.id",
               w.get("id")));
     }
     return orders;

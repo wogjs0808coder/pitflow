@@ -18,6 +18,8 @@ import {
   remaining,
 } from "@/lib/work";
 import { useWorkCommand } from "./work-command";
+import { Invoice, decimalNumber } from "@/lib/billing";
+import { requestTossPayment, tossPaymentError } from "@/lib/toss-payment";
 
 type PickerPart = Pick<Part, "id" | "sku" | "name" | "unit"> & {
   active?: boolean;
@@ -37,6 +39,7 @@ export function WorkOrders({
   const [orders, setOrders] = useState<Work[]>([]);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [parts, setParts] = useState<PickerPart[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selected, setSelected] = useState("");
   const [requestedWorkOrderId, setRequestedWorkOrderId] = useState("");
   const [detail, setDetail] = useState<WorkDetail | null>(null);
@@ -51,6 +54,7 @@ export function WorkOrders({
   const [itemTargets, setItemTargets] = useState<Record<string, string>>({});
   const [itemReasons, setItemReasons] = useState<Record<string, string>>({});
   const [showCancelForm, setShowCancelForm] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState("");
   const base = admin
     ? "/api/admin/work-orders"
     : mechanic
@@ -88,12 +92,16 @@ export function WorkOrders({
         : mechanic
           ? api<PickerPart[]>("/api/mechanic/parts", { signal: c.signal })
           : Promise.resolve([]),
+      admin
+        ? api<Invoice[]>("/api/admin/billing/invoices", { signal: c.signal })
+        : Promise.resolve<Invoice[]>([]),
     ])
-      .then(([w, m, p]) => {
+      .then(([w, m, p, invoiceRows]) => {
         if (!c.signal.aborted) {
           setOrders(w);
           setMechanics(m);
           setParts(p);
+          setInvoices(invoiceRows);
         }
       })
       .catch((e) => {
@@ -185,6 +193,26 @@ export function WorkOrders({
         .includes(query.toLowerCase()),
   );
   const disabled = command.blocked || loading || !!error;
+  const activeInvoice = detail
+    ? invoices.find(
+        (invoice) =>
+          invoice.work_order_id === detail.id && invoice.status === "OPEN",
+      )
+    : undefined;
+  const outstanding = activeInvoice
+    ? decimalNumber(activeInvoice.total) - decimalNumber(activeInvoice.paid)
+    : 0;
+
+  async function payWithToss(invoiceId: string) {
+    setPayingInvoice(invoiceId);
+    setError("");
+    try {
+      await requestTossPayment(invoiceId, true);
+    } catch (reason) {
+      setError(tossPaymentError(reason));
+      setPayingInvoice("");
+    }
+  }
   const eligible = bookings.filter(
     (b) =>
       b.status === "VISITED" && !orders.some((w) => w.appointment_id === b.id),
@@ -844,36 +872,80 @@ export function WorkOrders({
                   detail.status === "COMPLETED" && (
                     <div className="info-note">
                       <strong>정비 완료 · 출고 대기</strong>
-                      <p>
-                        차량 인도를 확인한 후 출고 처리하세요. 수납은 정산
-                        화면에서 별도로 확인합니다.
-                      </p>
-                      {admin && (
-                        <>
-                          <Link
-                            className="button secondary"
-                            href="/admin/billing"
-                          >
-                            정산·수납 확인
-                          </Link>{" "}
-                          <button
-                            className="button primary"
-                            disabled={disabled}
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  "차량을 고객에게 인도했습니까? 출고 완료 시각을 기록합니다.",
-                                )
-                              )
-                                void command.run(
-                                  `${base}/${detail.id}/release`,
-                                  {},
-                                );
-                            }}
-                          >
-                            출고 완료 처리
-                          </button>
-                        </>
+                      {mechanic ? (
+                        <p>정비 작업이 완료되었습니다. 정산·결제·출고는 관리자가 처리합니다.</p>
+                      ) : admin ? (
+                        !activeInvoice ? (
+                          <div className="workflow-billing-actions">
+                            <p>정산 명세를 발행한 뒤 결제와 출고를 진행하세요.</p>
+                            <Link
+                              className="button primary"
+                              href={`/admin/billing?workOrderId=${detail.id}`}
+                            >
+                              정산 명세 발행
+                            </Link>
+                          </div>
+                        ) : outstanding > 0 ? (
+                          <div className="workflow-billing-actions">
+                            <p>
+                              정산금액 {won(decimalNumber(activeInvoice.total))} · 미수금{" "}
+                              {won(outstanding)}
+                            </p>
+                            <div className="workflow-cta-actions">
+                              <button
+                                className="button primary"
+                                disabled={disabled || !!payingInvoice}
+                                onClick={() => void payWithToss(activeInvoice.id)}
+                              >
+                                {payingInvoice === activeInvoice.id
+                                  ? "결제창 준비 중…"
+                                  : "Toss 결제"}
+                              </button>
+                              <Link
+                                className="button secondary"
+                                href={`/admin/billing?invoiceId=${activeInvoice.id}`}
+                              >
+                                현장 수납·정산 화면
+                              </Link>
+                            </div>
+                            <p className="workflow-cta-help">
+                              미수금 결제를 완료해야 차량을 출고할 수 있습니다.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="workflow-billing-actions">
+                            <p>
+                              <strong>결제 완료</strong> · {won(decimalNumber(activeInvoice.total))}
+                            </p>
+                            <div className="workflow-cta-actions">
+                              <Link
+                                className="button secondary"
+                                href={`/admin/billing?invoiceId=${activeInvoice.id}`}
+                              >
+                                정산 내역 확인
+                              </Link>
+                              <button
+                                className="button primary"
+                                disabled={disabled}
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      "결제 완료를 확인했습니다. 차량을 고객에게 인도하고 출고 완료 시각을 기록할까요?",
+                                    )
+                                  )
+                                    void command.run(
+                                      `${base}/${detail.id}/release`,
+                                      {},
+                                    );
+                                }}
+                              >
+                                차량 출고 처리
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <p>관리자가 정산 명세와 결제를 확인한 뒤 차량을 출고합니다.</p>
                       )}
                     </div>
                   )

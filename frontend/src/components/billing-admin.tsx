@@ -16,6 +16,7 @@ import {
   decimalNumber,
 } from "@/lib/billing";
 import { Work, workLabel, localTime } from "@/lib/work";
+import { requestTossPayment, tossPaymentError } from "@/lib/toss-payment";
 
 import { seoulToday as today } from "@/lib/appointments";
 const monthStart = () => `${today().slice(0, 8)}01`;
@@ -56,8 +57,28 @@ export function BillingAdmin() {
   const [loading, setLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [confirmZero, setConfirmZero] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState("");
   const reload = useCallback(async () => setRevision((value) => value + 1), []);
   const command = useWorkCommand(reload);
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const invoiceId = query.get("invoiceId");
+    const workOrderId = query.get("workOrderId");
+    if (invoiceId) setSelectedInvoice(invoiceId);
+    else if (workOrderId) setSelectedWork(workOrderId);
+  }, []);
+
+  async function payWithToss(invoiceId: string) {
+    setPayingInvoice(invoiceId);
+    setError("");
+    try {
+      await requestTossPayment(invoiceId, true);
+    } catch (reason) {
+      setError(tossPaymentError(reason));
+      setPayingInvoice("");
+    }
+  }
 
   useEffect(() => {
     if (user?.role !== "ADMIN") return;
@@ -367,38 +388,55 @@ export function BillingAdmin() {
               {detail.status === "OPEN" &&
                 decimalNumber(detail.balance) > 0 &&
                 !detail.stale && (
-                  <form
-                    onSubmit={(e) => {
-                      const fields = Fields({ e });
-                      void command.run(
-                        `/api/admin/billing/invoices/${detail.id}/payments`,
-                        {
-                          method: fields.get("method"),
-                          reference: fields.get("reference"),
-                          expectedTotal: String(detail.total),
-                        },
-                      );
-                    }}
-                  >
-                    <h3>현장 수납</h3>
-                    <fieldset disabled={disabled}>
-                      <label>
-                        수납 방법
-                        <select name="method" defaultValue="CARD">
-                          <option value="CASH">현금</option>
-                          <option value="CARD">카드</option>
-                          <option value="TRANSFER">계좌이체</option>
-                        </select>
-                      </label>
-                      <label>
-                        승인번호·메모
-                        <input name="reference" maxLength={100} />
-                      </label>
-                      <button className="button primary">
-                        {won(decimalNumber(detail.balance))} 수납 완료
+                  <div className="billing-collection-options">
+                    <div className="billing-payment-cta">
+                      <h3>카운터 Toss 결제</h3>
+                      <p className="muted">
+                        결제 고객은 관리자 계정이 아니라 이 명세의 고객으로 기록됩니다.
+                      </p>
+                      <button
+                        className="button primary"
+                        disabled={disabled || !!payingInvoice}
+                        onClick={() => void payWithToss(detail.id)}
+                      >
+                        {payingInvoice === detail.id
+                          ? "결제창 준비 중…"
+                          : `${won(decimalNumber(detail.balance))} Toss 결제`}
                       </button>
-                    </fieldset>
-                  </form>
+                    </div>
+                    <form
+                      onSubmit={(e) => {
+                        const fields = Fields({ e });
+                        void command.run(
+                          `/api/admin/billing/invoices/${detail.id}/payments`,
+                          {
+                            method: fields.get("method"),
+                            reference: fields.get("reference"),
+                            expectedTotal: String(detail.total),
+                          },
+                        );
+                      }}
+                    >
+                      <h3>현장 수납</h3>
+                      <fieldset disabled={disabled || !!payingInvoice}>
+                        <label>
+                          수납 방법
+                          <select name="method" defaultValue="CARD">
+                            <option value="CASH">현금</option>
+                            <option value="CARD">카드</option>
+                            <option value="TRANSFER">계좌이체</option>
+                          </select>
+                        </label>
+                        <label>
+                          승인번호·메모
+                          <input name="reference" maxLength={100} />
+                        </label>
+                        <button className="button secondary">
+                          {won(decimalNumber(detail.balance))} 현장 수납
+                        </button>
+                      </fieldset>
+                    </form>
+                  </div>
                 )}
               {detail.status === "OPEN" && decimalNumber(detail.paid) === 0 && (
                 <form
@@ -440,7 +478,9 @@ export function BillingAdmin() {
                         onSubmit={(e) => {
                           const fields = Fields({ e });
                           void command.run(
-                            `/api/admin/billing/payments/${payment.id}/reverse`,
+                            payment.provider === "TOSS"
+                              ? `/api/admin/billing/payments/${payment.id}/toss-refund`
+                              : `/api/admin/billing/payments/${payment.id}/reverse`,
                             { reason: fields.get("reason") },
                           );
                         }}
@@ -451,7 +491,7 @@ export function BillingAdmin() {
                             <input name="reason" required maxLength={500} />
                           </label>
                           <button className="button secondary">
-                            이 수납 취소
+                            {payment.provider === "TOSS" ? "Toss 결제 환불" : "이 수납 취소"}
                           </button>
                         </fieldset>
                       </form>
@@ -467,8 +507,8 @@ export function BillingAdmin() {
         </section>
       </div>
       <p className="info-note">
-        수납은 Toss 등 외부 결제가 아니라 현장에서 확인한 결제 사실을
-        기록합니다. 카드 승인·환불 연동은 후속 범위입니다.
+        현장 수납은 관리자가 확인한 결제 사실을 기록합니다. 고객의 Toss 테스트
+        결제는 승인 후 자동 반영되며 이 화면에서 결제사 환불을 진행합니다.
       </p>
       <Link className="inline-link" href="/admin/work-orders">
         정비 작업 관리로 이동 →

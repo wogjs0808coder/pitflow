@@ -98,6 +98,15 @@ public class WorkController {
     return s.adjust(p.getName(), key, id, r);
   }
 
+  @PostMapping("/parts/{id}/cost-resolutions")
+  public Object resolveCost(
+      Principal p,
+      @RequestHeader("Idempotency-Key") UUID key,
+      @PathVariable UUID id,
+      @Valid @RequestBody CostResolution r) {
+    return s.resolveInventoryCost(p.getName(), key, id, r);
+  }
+
   @GetMapping("/work-orders")
   public Object list(Principal p) {
     return s.list(p.getName(), true);

@@ -21,6 +21,10 @@ export default function PartsPage() {
   const [parts, setParts] = useState<Part[]>([]);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
+  const [inventoryExpanded, setInventoryExpanded] = useState(false);
+  const [resolutionPart, setResolutionPart] = useState("");
+  const [resolutionQuantity, setResolutionQuantity] = useState("");
+  const [resolutionUnitCost, setResolutionUnitCost] = useState("");
   const [selected, setSelected] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [history, setHistory] = useState<Movement[]>([]);
@@ -98,6 +102,9 @@ export default function PartsPage() {
           : !p.active && !p.archived)),
   );
   const chosen = parts.find((p) => p.id === selected);
+  const resolutionTarget = treasury?.inventory.items.find(
+    (item) => item.part_id === resolutionPart,
+  );
   return (
     <>
       <div className="page-heading">
@@ -168,7 +175,15 @@ export default function PartsPage() {
                 원가 미확정 재고 {treasury.inventory.unknown_part_count.toLocaleString("ko-KR")}개 품목 / {treasury.inventory.unknown_quantity.toLocaleString("ko-KR")}개
               </p>
             )}
-            <div className="finance-table-wrap">
+            <button
+              type="button"
+              className="button secondary"
+              aria-expanded={inventoryExpanded}
+              onClick={() => setInventoryExpanded((value) => !value)}
+            >
+              재고자산 상세 {inventoryExpanded ? "접기" : "펼치기"}
+            </button>
+            {inventoryExpanded && <div className="finance-table-wrap">
               <table className="finance-table">
                 <thead>
                   <tr>
@@ -177,6 +192,8 @@ export default function PartsPage() {
                     <th>확정 원가 수량</th>
                     <th>확정 자산가치</th>
                     <th>미확정 수량</th>
+                    <th>원가 상태</th>
+                    <th>관리</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -185,16 +202,88 @@ export default function PartsPage() {
                       <td><strong>{item.name}</strong><span>{item.sku}</span></td>
                       <td>{item.on_hand_quantity.toLocaleString("ko-KR")} {item.unit}</td>
                       <td>{item.known_quantity.toLocaleString("ko-KR")} {item.unit}</td>
-                      <td>{won(item.known_asset_value)}</td>
+                      <td>
+                        {item.known_quantity === 0 && item.has_unknown_cost
+                          ? "원가 미확정"
+                          : won(item.known_asset_value)}
+                      </td>
                       <td>{item.unknown_quantity.toLocaleString("ko-KR")} {item.unit}</td>
+                      <td>
+                        {item.has_unknown_cost
+                          ? item.known_quantity > 0 ? "일부 확정" : "미확정"
+                          : "확정"}
+                      </td>
+                      <td>
+                        {item.has_unknown_cost && (
+                          <button
+                            type="button"
+                            className="button secondary compact-button"
+                            onClick={() => {
+                              setResolutionPart(item.part_id);
+                              setResolutionQuantity("");
+                              setResolutionUnitCost("");
+                            }}
+                          >
+                            미확정 원가 확정
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {!treasury.inventory.items.length && (
-                    <tr><td colSpan={5}>현재 재고자산이 없습니다.</td></tr>
+                    <tr><td colSpan={7}>현재 재고자산이 없습니다.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
+            }
+            {inventoryExpanded && resolutionTarget && (
+              <form
+                className="inventory-resolution-form"
+                onSubmit={(e) => {
+                  const f = form(e);
+                  void command.run(
+                    `/api/admin/parts/${resolutionTarget.part_id}/cost-resolutions`,
+                    {
+                      quantity: f.get("quantity"),
+                      unitCost: f.get("unitCost"),
+                      reason: f.get("reason"),
+                    },
+                  );
+                }}
+              >
+                <div className="section-heading">
+                  <div>
+                    <span className="eyebrow">COST RESOLUTION</span>
+                    <h3>{resolutionTarget.name} 미확정 원가 확정</h3>
+                  </div>
+                  <button type="button" className="button secondary" onClick={() => setResolutionPart("")}>닫기</button>
+                </div>
+                <p>
+                  미확정 수량 {resolutionTarget.unknown_quantity.toLocaleString("ko-KR")} {resolutionTarget.unit} ·
+                  과거 재고의 가치만 확정하며 운영자금은 차감되지 않습니다.
+                </p>
+                <fieldset disabled={disabled}>
+                  <label>
+                    확정할 수량 ({resolutionTarget.unit})
+                    <input name="quantity" type="number" required min={resolutionTarget.unit === "EA" ? "1" : "0.001"} max={resolutionTarget.unknown_quantity} step={resolutionTarget.unit === "EA" ? "1" : "0.001"} value={resolutionQuantity} onChange={(e) => setResolutionQuantity(e.target.value)} />
+                  </label>
+                  <label>
+                    취득 단가 (원)
+                    <input name="unitCost" type="number" required min="0" max="99999999999.999" step="0.001" value={resolutionUnitCost} onChange={(e) => setResolutionUnitCost(e.target.value)} />
+                  </label>
+                  <label>
+                    사유
+                    <input name="reason" required maxLength={500} placeholder="예: 초기 재고 원가 등록" />
+                  </label>
+                  <button className="button primary">원가 확정 저장</button>
+                </fieldset>
+                <p className="field-help">
+                  예상 확정 자산가치: {won(Math.round(Number(resolutionQuantity || 0) * Number(resolutionUnitCost || 0)))} ·
+                  0원은 확인된 0원 원가로 저장됩니다.
+                </p>
+              </form>
+            )}
           </section>
         )}
         <div className="management-toolbar">

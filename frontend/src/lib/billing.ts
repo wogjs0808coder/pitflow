@@ -38,6 +38,19 @@ export type Payment = {
   reference: string;
   reason: string;
   created_at: string;
+  provider: "TOSS" | null;
+  provider_status: "DONE" | "CANCELED" | null;
+};
+
+export type TossOrder = {
+  clientKey: string;
+  invoiceId: string;
+  orderId: string;
+  customerKey: string;
+  customerEmail: string;
+  customerName: string;
+  amount: Decimal;
+  orderName: string;
 };
 
 export type InvoiceDetail = {
@@ -77,6 +90,8 @@ export type HistoryWork = {
     id: string;
     status: "OPEN" | "VOID";
     total: Decimal;
+    paid: Decimal;
+    balance: Decimal;
     issued_at: string;
   }[];
 };

@@ -790,6 +790,39 @@ footer {
 .treasury-inventory-section {
   margin-bottom: 20px;
 }
+
+.inventory-resolution-form,
+.billing-payment-cta,
+.payment-result {
+  margin-top: 1rem;
+}
+
+.inventory-resolution-form {
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.compact-button {
+  white-space: nowrap;
+}
+
+.payment-result {
+  max-width: 720px;
+}
+
+.billing-collection-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 1rem;
+}
+
+.billing-collection-options > * {
+  margin-top: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
 .finance-management-section {
   margin-top: 20px;
 }
@@ -958,6 +991,41 @@ footer {
 .history-invoice:hover {
   border-color: #97b3a4;
   background: #fbfdfc;
+}
+
+.history-payment-summary,
+.history-invoice-payment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.history-payment-summary {
+  margin-bottom: 20px;
+}
+
+.history-payment-summary strong {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.history-invoice-block {
+  margin: 8px 0 14px;
+}
+
+.history-invoice-block .history-invoice {
+  margin-bottom: 6px;
+}
+
+.history-invoice-payment {
+  padding: 4px 0 0 12px;
+}
+
+.history-payment-complete {
+  display: block;
+  padding-left: 12px;
+  color: var(--green);
 }
 .empty-state {
   border: 1px dashed #cad4da;
@@ -2764,6 +2832,10 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
   gap: 8px;
 }
 
+.workflow-billing-actions {
+  width: 100%;
+}
+
 .workflow-cta-help {
   flex-basis: 100%;
   margin-bottom: 0 !important;
@@ -2805,6 +2877,16 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
 
   .workflow-cta-actions {
     justify-content: flex-start;
+  }
+
+  .billing-collection-options {
+    grid-template-columns: 1fr;
+  }
+
+  .history-payment-summary,
+  .history-invoice-payment {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

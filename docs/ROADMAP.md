@@ -10,7 +10,7 @@
 - Phase 4B — Finance Integration: 완료
 - Phase 4C — Final Validation / Production Readiness / Documentation: 완료
 - Phase 4 — Finance & Cost: 완료
-- 현재 단계: Phase 5A — Treasury Core & Rebalancing 완료
+- 현재 단계: Phase 5 통합 구현 완료, PostgreSQL 17·실제 Toss 테스트 키 검증 대기
 
 이 문서의 Phase 번호를 앞으로의 공식 기준으로 사용한다.
 `docs/archive`의 과거 Phase 번호는 이전 개발 이력이다.
@@ -140,7 +140,7 @@ Phase 4C는 2026-09-21 기준 완료했다.
 
 ## Phase 5 — Payments & Treasury
 
-### 5A — Treasury Core & Rebalancing 진행 중
+### 5A — Treasury Core & Rebalancing 완료
 
 - Phase 5 시작 시점 현재 회사자산 1,000,000,000원 opening baseline
 - OPERATING / DEPOSIT / INVESTMENT 현재 잔액과 목표 40/30/30 비중
@@ -148,24 +148,34 @@ Phase 4C는 2026-09-21 기준 완료했다.
 - deterministic row lock, 총자산 보존, Idempotency-Key 및 rollback 검증
 - 관리자 Finance 화면 Treasury summary card
 - 로컬 Backend 125/125 및 Frontend typecheck/build 통과
-- PostgreSQL 17 전체 검증 대기; 통과 전까지 완료로 기록하지 않음
+- PostgreSQL 17 전체 검증 완료
 
-### 5B — Daily Deposit / Investment Simulation
+### 5B — Managed Assets / Cashflow / Daily Simulation 완료
 
+- 금융자산 + 확정 재고자산 + 미수채권 관리 자산 합계
+- 입고·수납/환불·현금 전표·급여 지급 Treasury cashflow 연결
 - 은행예치 일복리와 투자자산 일별 수익률 확정
 - 날짜별 중복 방지, catch-up, 일별 원장
 
-### 5C — Toss Payments Test Integration
+### 5C — Payments / Inventory Resolution / Finalization 구현 완료
 
-- Toss Payments test 결제 승인·취소·환불
-- server-side confirm, webhook deduplication, idempotency, reconciliation
+- Toss Payments test 결제 요청·redirect·서버 승인·취소/환불
+- invoice 소유권·서버 금액·provider identifier 검증
+- DB unique constraint와 durable command를 결합한 승인/환불 멱등성
+- 외부 승인 후 내부 기록 실패 시 provider 조회 기반 재시도 복구
+- 전액 환불 후 취소 주문 이력을 보존한 Toss 신규 주문 또는 현장 재수납
+- UNKNOWN 재고 lot의 append-only 전체/부분/0원 원가 확정
+- 재고자산 기본 접힘, UNKNOWN 전용 표시와 원가 확정 form
+- server-side confirm, redirect/confirm 중복 방지, idempotency, provider 조회 복구
+- 완료 작업 카드의 CUSTOMER 즉시 결제와 ADMIN 카운터 Toss 결제
+- MECHANIC 정비 완료 / ADMIN 명세 발행·결제 확인·출고 역할 분리 및 미수 출고 차단
 
-### 5D — Business Cashflow Integration
+### 5D — Business Cashflow Integration (5C에 통합 완료)
 
 - 고객 결제·환불과 실제 운영비·급여 지급을 OPERATING에 연결
 - Phase 4 관리 손익과 실제 cash movement의 중복 반영 방지
 
-### 5E — Final Finance Dashboard / Validation
+### 5E — Final Finance Dashboard / Validation (5C에 통합 완료)
 
 - Finance와 Treasury 통합 표시 및 최종 재무 경계 검증
 
@@ -195,5 +205,5 @@ Phase 4C는 2026-09-21 기준 완료했다.
 
 ## 현재 이후 구현 순서
 
-Phase 5A → Phase 5B → Phase 5C → Phase 5D → Phase 5E
+Phase 5 구현, PostgreSQL 17 회귀, 실제 Toss 테스트 결제·환불 검증을 완료했다. 최종 결제·출고 UX browser smoke 후 Phase 6으로 진행한다.
 → Phase 6

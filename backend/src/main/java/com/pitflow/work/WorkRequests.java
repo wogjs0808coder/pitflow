@@ -90,5 +90,11 @@ public final class WorkRequests {
       @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal expectedQuantity,
       @NotBlank @Size(max = 500) String reason) {}
 
+  public record CostResolution(
+      @NotNull @DecimalMin(value = "0", inclusive = false) @Digits(integer = 11, fraction = 3)
+          BigDecimal quantity,
+      @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal unitCost,
+      @NotBlank @Size(max = 500) String reason) {}
+
   public record Reason(@NotBlank @Size(max = 500) String reason) {}
 }

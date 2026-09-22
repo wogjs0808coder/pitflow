@@ -11,6 +11,7 @@ import {
 } from "@/lib/billing";
 import { localTime, workLabel } from "@/lib/work";
 import { Vehicle } from "@/lib/api";
+import { requestTossPayment, tossPaymentError } from "@/lib/toss-payment";
 
 export function BillingHistory() {
   const { user } = useAuth();
@@ -21,6 +22,18 @@ export function BillingHistory() {
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState("");
+
+  async function pay(invoiceId: string) {
+    setPayingInvoice(invoiceId);
+    setError("");
+    try {
+      await requestTossPayment(invoiceId);
+    } catch (reason) {
+      setError(tossPaymentError(reason));
+      setPayingInvoice("");
+    }
+  }
 
   useEffect(() => {
     if (!user) return;
@@ -69,6 +82,10 @@ export function BillingHistory() {
   }, [selectedInvoice, user]);
 
   if (!user) return <p role="alert">로그인이 필요합니다.</p>;
+  const unpaid = history
+    .flatMap((work) => work.invoices)
+    .filter((row) => row.status === "OPEN" && Number(row.balance) > 0);
+  const unpaidTotal = unpaid.reduce((sum, row) => sum + Number(row.balance), 0);
   return (
     <>
       <div className="page-heading">
@@ -82,6 +99,28 @@ export function BillingHistory() {
         <div className="error" role="alert">
           {error}
         </div>
+      )}
+      {unpaid.length > 0 && (
+        <section className="work-panel history-payment-summary">
+          <div>
+            <span className="eyebrow">PAYMENT DUE</span>
+            <strong>
+              미결제 정산 {unpaid.length}건 · {won(unpaidTotal)}
+            </strong>
+            {unpaid.length > 1 && (
+              <p className="muted">각 정산 명세는 한 건씩 결제됩니다.</p>
+            )}
+          </div>
+          <button
+            className="button primary"
+            disabled={!!payingInvoice}
+            onClick={() => void pay(unpaid[0].id)}
+          >
+            {payingInvoice === unpaid[0].id
+              ? "결제창 준비 중…"
+              : `${won(Number(unpaid[0].balance))} 결제하기`}
+          </button>
+        </section>
       )}
       <div className="history-filter">
         <label>
@@ -134,22 +173,42 @@ export function BillingHistory() {
               <h3>정산 명세</h3>
               {work.invoices.length ? (
                 work.invoices.map((row) => (
-                  <button
-                    className="history-invoice"
-                    key={row.id}
-                    onClick={() => {
-                      setSelectedInvoice(row.id);
-                    }}
-                  >
-                    <span>
-                      {row.status === "OPEN" ? "유효" : "취소"} ·{" "}
-                      {localTime(row.issued_at)}
-                    </span>
-                    <strong>{won(Number(row.total))}</strong>
-                  </button>
+                  <div className="history-invoice-block" key={row.id}>
+                    <button
+                      className="history-invoice"
+                      onClick={() => setSelectedInvoice(row.id)}
+                    >
+                      <span>
+                        {row.status === "OPEN" ? "유효" : "취소"} ·{" "}
+                        {localTime(row.issued_at)}
+                      </span>
+                      <strong>{won(Number(row.total))}</strong>
+                    </button>
+                    {row.status === "VOID" ? (
+                      <span className="muted">취소된 명세</span>
+                    ) : Number(row.balance) > 0 ? (
+                      <div className="history-invoice-payment">
+                        <span>
+                          정산금액 {won(Number(row.total))} · 미결제{" "}
+                          {won(Number(row.balance))}
+                        </span>
+                        <button
+                          className="button primary compact-button"
+                          disabled={!!payingInvoice}
+                          onClick={() => void pay(row.id)}
+                        >
+                          {payingInvoice === row.id
+                            ? "결제창 준비 중…"
+                            : `${won(Number(row.balance))} 결제하기`}
+                        </button>
+                      </div>
+                    ) : (
+                      <strong className="history-payment-complete">결제 완료</strong>
+                    )}
+                  </div>
                 ))
               ) : (
-                <p>발행된 정산 명세가 없습니다.</p>
+                <p>정산 준비 중</p>
               )}
             </article>
           ))}
@@ -172,6 +231,20 @@ export function BillingHistory() {
             수납 {won(Number(invoice.paid))} · 잔액{" "}
             {won(Number(invoice.balance))}
           </p>
+          {invoice.status === "OPEN" && Number(invoice.balance) > 0 && (
+            <div className="billing-payment-cta">
+              <button
+                className="button primary"
+                disabled={!!payingInvoice}
+                onClick={() => void pay(invoice.id)}
+              >
+                {payingInvoice === invoice.id
+                  ? "결제창 준비 중…"
+                  : `${won(Number(invoice.balance))} 결제하기`}
+              </button>
+              <p className="muted">테스트 결제 환경에서만 승인되며, 승인 완료 후 수납으로 반영됩니다.</p>
+            </div>
+          )}
           <h3>수납 이력</h3>
           {invoice.payments.map((payment) => (
             <article className="work-movement" key={payment.id}>

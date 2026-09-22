@@ -77,4 +77,12 @@ V21의 `treasury_accounts`는 OPERATING, DEPOSIT, INVESTMENT 세 계정의 현�
 
 재조정은 ADMIN이 명시적으로 요청할 때만 실행합니다. 기존 durable command/idempotency transaction 안에서 세 계정을 `account_type` 순으로 `FOR UPDATE` 잠금하고, OPERATING과 DEPOSIT을 원 단위 `HALF_UP`으로 계산한 뒤 INVESTMENT에 remainder를 배정합니다. 계정 갱신과 같은 `event_group_id`의 원장 3건은 한 transaction에서 커밋되며 delta 합계와 총자산은 0 및 기존 총액을 유지합니다. 이미 목표 금액이면 원장을 만들지 않는 safe no-op입니다.
 
-Phase 4 Finance는 관리 손익·원가 분석이고 Phase 5 Treasury는 현재 운용 자산입니다. V21은 기존 매출, 현장 수납, 급여, 운영비를 Treasury에 자동 반영하지 않습니다. 향후 실제 cash movement 연결은 Phase 5D에서 별도 거래로 구현합니다.
+Phase 4 Finance는 관리 손익·원가 분석이고 Phase 5 Treasury는 현재 운용 자산입니다. V22부터 신규 재고 매입, 고객 수납/환불, 현금 전표, 급여 실제 지급을 OPERATING에 연결하고 source type/id를 원장에 남깁니다. 재조정과 일일 예금·투자 정산도 동일한 deterministic account lock 순서를 사용합니다.
+
+## Payments and inventory cost resolution
+
+V23의 `payment_provider_orders`는 Toss 주문, paymentKey/orderId/amount, 승인·환불 상태와 기존 `payment_records` 연결만 저장합니다. V24는 invoice당 주문 하나라는 제약을 제거하되 provider order/payment key의 고유성은 유지하여, 전액 환불된 주문 이력을 보존하면서 같은 invoice에 새 결제 시도를 만들 수 있게 합니다. 카드 개인정보나 provider raw response는 저장하지 않습니다. 외부 API 호출은 DB lock 밖에서 수행하고, 승인 결과의 내부 반영은 기존 durable command transaction 안에서 payment record, Treasury 원장, provider 상태를 함께 확정합니다. 실패 후 재시도는 provider 조회로 승인 상태를 복구합니다.
+
+Customer와 ADMIN 카운터 결제는 동일한 Toss service core를 사용하지만 authorization endpoint는 분리합니다. ADMIN이 결제창을 열고 confirm해도 provider order의 customer, customerKey, payment actor는 invoice 고객을 유지합니다. 결제 준비·승인·현장 수납은 잠근 invoice의 현재 미수금을 다시 계산하고 현재 범위의 전액 수납만 허용해 중복·초과 수납을 차단합니다. 업무 역할은 MECHANIC 정비 완료, ADMIN 명세 발행·결제 확인·출고이며, OPEN invoice 미수금 또는 REFUNDING 주문이 남은 WorkOrder는 출고할 수 없습니다.
+
+`inventory_cost_resolutions`는 UNKNOWN lot 원가 확정을 append-only로 기록합니다. 원본 UNKNOWN lot의 잔량을 줄이고 같은 FIFO 시점의 KNOWN lot을 추가하므로 부분 확정과 KNOWN 0원이 가능하며, 과거 취득분 확정은 Treasury를 변경하지 않습니다. 신규 유상 입고만 INVENTORY_PURCHASE로 OPERATING을 차감합니다.

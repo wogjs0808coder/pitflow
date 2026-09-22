@@ -6,7 +6,9 @@ import com.pitflow.catalog.*;
 import com.pitflow.catalog.ServiceRequest.PartRequirement;
 import com.pitflow.common.ApiException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,12 +22,45 @@ import org.springframework.transaction.annotation.Transactional;
 class CatalogEstimateIntegrationTest {
   @Autowired CatalogService catalog;
   @Autowired JdbcTemplate db;
+  UUID tirePart;
+  UUID washerPart;
+
+  @BeforeEach
+  void ensurePartFixtures() {
+    tirePart = ensurePart("PF-TIRE", "테스트 타이어", "EA", new BigDecimal("100000"));
+    washerPart = ensurePart("PF-WASHER", "테스트 워셔액", "L", new BigDecimal("5000"));
+  }
+
+  private UUID ensurePart(String sku, String name, String unit, BigDecimal unitPrice) {
+    UUID id =
+        UUID.nameUUIDFromBytes(("catalog-estimate/" + sku).getBytes(StandardCharsets.UTF_8));
+    db.update(
+        """
+        INSERT INTO parts(
+            id,sku,name,unit,quantity,minimum_quantity,unit_price,active,archived,description
+        )
+        SELECT ?,?,?,?,0,0,?,TRUE,FALSE,''
+        WHERE NOT EXISTS (SELECT 1 FROM parts WHERE sku=?)
+        """,
+        id,
+        sku,
+        name,
+        unit,
+        unitPrice,
+        sku);
+    db.update(
+        "UPDATE parts SET name=?,unit=?,unit_price=?,active=TRUE,archived=FALSE WHERE sku=?",
+        name,
+        unit,
+        unitPrice,
+        sku);
+    return db.queryForObject("SELECT id FROM parts WHERE sku=?", UUID.class, sku);
+  }
 
   @Test
   void adminCanSaveConfirmedPartRequirementsAndSeeEstimatedTotal() {
-    UUID tire = db.queryForObject("SELECT id FROM parts WHERE sku='PF-TIRE'", UUID.class);
     BigDecimal tirePrice =
-        db.queryForObject("SELECT unit_price FROM parts WHERE id=?", BigDecimal.class, tire);
+        db.queryForObject("SELECT unit_price FROM parts WHERE id=?", BigDecimal.class, tirePart);
 
     ServiceView created =
         catalog.create(
@@ -35,11 +70,11 @@ class CatalogEstimateIntegrationTest {
                 new BigDecimal("10000"),
                 60,
                 true,
-                List.of(new PartRequirement(tire, new BigDecimal("2")))));
+                List.of(new PartRequirement(tirePart, new BigDecimal("2")))));
 
     assertThat(created.requirementsConfirmed()).isTrue();
     assertThat(created.parts()).hasSize(1);
-    assertThat(created.parts().get(0).partId()).isEqualTo(tire);
+    assertThat(created.parts().get(0).partId()).isEqualTo(tirePart);
     assertThat(created.parts().get(0).quantity()).isEqualByComparingTo("2");
     assertThat(created.estimatedPartsPrice())
         .isEqualByComparingTo(tirePrice.multiply(new BigDecimal("2")));
@@ -57,7 +92,7 @@ class CatalogEstimateIntegrationTest {
                 "SELECT required_quantity FROM service_part_requirements WHERE service_id=? AND part_id=?",
                 BigDecimal.class,
                 created.id(),
-                tire))
+                tirePart))
         .isEqualByComparingTo("2");
   }
 
@@ -86,14 +121,9 @@ class CatalogEstimateIntegrationTest {
   }
 
   @Test
-    void washerServiceKeepsVariableQuantityWhenAdminSavesIt() {
+  void washerServiceKeepsVariableQuantityWhenAdminSavesIt() {
     UUID washerService =
         UUID.fromString("f6b2e966-cf84-3576-9a3f-a64ebf1de473");
-
-    UUID washerPart =
-        db.queryForObject(
-            "SELECT id FROM parts WHERE sku='PF-WASHER'",
-            UUID.class);
 
     // Other integration tests may clear service_items from the shared CI test DB.
     // This test owns its prerequisite instead of depending on migration seed state.
@@ -170,11 +200,11 @@ class CatalogEstimateIntegrationTest {
                 washerService,
                 washerPart))
         .isFalse();
-    }
+  }
+
   @Test
   void inactivePartCannotBecomeAConfirmedRequirement() {
-    UUID tire = db.queryForObject("SELECT id FROM parts WHERE sku='PF-TIRE'", UUID.class);
-    db.update("UPDATE parts SET active=FALSE WHERE id=?", tire);
+    db.update("UPDATE parts SET active=FALSE WHERE id=?", tirePart);
 
     assertThatThrownBy(
             () ->
@@ -185,7 +215,7 @@ class CatalogEstimateIntegrationTest {
                         new BigDecimal("10000"),
                         30,
                         true,
-                        List.of(new PartRequirement(tire, BigDecimal.ONE)))))
+                        List.of(new PartRequirement(tirePart, BigDecimal.ONE)))))
         .isInstanceOf(ApiException.class)
         .hasMessageContaining("비활성");
   }
