@@ -59,6 +59,53 @@ class AccountIntegrationTest {
 
   private String body(Map<String, ?> values) throws Exception { return json.writeValueAsString(values); }
 
+  private org.springframework.mock.web.MockHttpSession login(AppUser account) throws Exception {
+    return (org.springframework.mock.web.MockHttpSession) mvc.perform(post("/api/auth/login")
+        .with(csrf()).param("email", account.getEmail()).param("password", PASSWORD))
+        .andExpect(status().isOk()).andReturn().getRequest().getSession(false);
+  }
+
+  @Test
+  void deactivatedAdminCannotUseAnExistingSession() throws Exception {
+    var main = create("session-main", AppUser.Role.ADMIN, null);
+    main.designateMainAdmin(); users.saveAndFlush(main);
+    var target = create("session-admin", AppUser.Role.ADMIN, null);
+    var session = login(target);
+    mvc.perform(get("/api/admin/parts").session(session)).andExpect(status().isOk());
+    mvc.perform(delete("/api/admin/accounts/" + target.getId())
+        .with(user(main.getEmail()).roles("ADMIN")).with(csrf())).andExpect(status().isNoContent());
+    mvc.perform(get("/api/admin/parts").session(session)).andExpect(status().isUnauthorized());
+    assertThat(session.isInvalid()).isTrue();
+  }
+
+  @Test
+  void emailChangeRevokesOtherSessionsEvenWhenOldEmailIsReused() throws Exception {
+    var target = create("session-email", AppUser.Role.CUSTOMER, "01012349901");
+    var first = login(target);
+    var second = login(target);
+    mvc.perform(put("/api/auth/profile").session(first).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(body(Map.of(
+            "name", "고객", "email", "p6-session-renamed@example.com", "phoneNumber", "01012349901",
+            "birthDate", "1990-01-02", "currentPassword", PASSWORD))))
+        .andExpect(status().isOk());
+    var replacement = create("session-email", AppUser.Role.CUSTOMER, "01012349902");
+    assertThat(replacement.getId()).isNotEqualTo(target.getId());
+    mvc.perform(get("/api/auth/me").session(second)).andExpect(status().isUnauthorized());
+    assertThat(second.isInvalid()).isTrue();
+  }
+
+  @Test
+  void passwordResetRevokesExistingSessions() throws Exception {
+    var target = create("session-reset", AppUser.Role.CUSTOMER, "01012349903");
+    var session = login(target);
+    mvc.perform(post("/api/auth/reset-password").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+        .content(body(Map.of("name", "고객", "phoneNumber", target.getPhoneNumber(),
+            "birthDate", "1990-01-02", "newPassword", "Next-password-2026!"))))
+        .andExpect(status().isNoContent());
+    mvc.perform(get("/api/vehicles").session(session)).andExpect(status().isUnauthorized());
+    assertThat(session.isInvalid()).isTrue();
+  }
+
   @Test
   void legacyLoginAndOneTimeCompletionPreserveUser() throws Exception {
     var legacy = create("legacy", AppUser.Role.CUSTOMER, null);
