@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,17 +17,20 @@ public class AdminBootstrap implements ApplicationRunner {
   private final UserRepository users;
   private final PasswordEncoder encoder;
   private final Validator validator;
+  private final JdbcTemplate db;
   private final String email, password;
 
   public AdminBootstrap(
       UserRepository users,
       PasswordEncoder encoder,
       Validator validator,
+      JdbcTemplate db,
       @Value("${pitflow.bootstrap.admin-email}") String email,
       @Value("${pitflow.bootstrap.admin-password}") String password) {
     this.users = users;
     this.encoder = encoder;
     this.validator = validator;
+    this.db = db;
     this.email = email;
     this.password = password;
   }
@@ -35,10 +39,14 @@ public class AdminBootstrap implements ApplicationRunner {
   @Transactional
   public void run(ApplicationArguments args) {
     if (email.isBlank() && password.isBlank()) return;
+    // Serialize startup seeds, including instances using different bootstrap emails.
+    db.queryForObject("SELECT next_number FROM admin_account_sequence WHERE id=1 FOR UPDATE", Long.class);
+    var mainAdmins = users.findAllByRole(AppUser.Role.ADMIN).stream()
+        .filter(AppUser::isMainAdmin).toList();
+    if (mainAdmins.size() > 1)
+      throw new IllegalStateException("Multiple main administrators are configured.");
+    if (!mainAdmins.isEmpty()) return;
     String normalized = email.strip().toLowerCase(Locale.ROOT);
-    if (users.findAllByRole(AppUser.Role.ADMIN).stream()
-        .anyMatch(user -> user.isMainAdmin() && !user.getEmail().equals(normalized)))
-      throw new IllegalStateException("A different main administrator is already configured.");
     var existing = users.findByEmail(normalized);
     if (existing.isPresent()) {
       if (existing.get().getRole() != AppUser.Role.ADMIN || !existing.get().isAdminActive())

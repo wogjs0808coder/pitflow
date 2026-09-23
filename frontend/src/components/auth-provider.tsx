@@ -13,6 +13,7 @@ type Auth = {
   error: string;
   refresh: () => Promise<User | null>;
   logout: () => Promise<void>;
+  forgetUser: () => void;
 };
 const Context = createContext<Auth | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -43,8 +44,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setError("");
   }
+  function forgetUser() {
+    setUser(null);
+    setError("");
+  }
   return (
-    <Context.Provider value={{ user, loading, error, refresh, logout }}>
+    <Context.Provider value={{ user, loading, error, refresh, logout, forgetUser }}>
       {children}
     </Context.Provider>
   );
