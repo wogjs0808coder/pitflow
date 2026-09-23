@@ -96,6 +96,7 @@ public class Notification {
   public enum Type {
     WORK_ASSIGNED,
     WORK_COMPLETED,
-    PART_SHORTAGE
+    PART_SHORTAGE,
+    PART_SHORTAGE_RESOLVED
   }
 }

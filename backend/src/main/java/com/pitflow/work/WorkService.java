@@ -637,11 +637,18 @@ ORDER BY p.name,p.id
           UUID resolver = actor(email, true);
           var report = one("SELECT * FROM part_shortage_reports WHERE id=? FOR UPDATE", reportId);
           if ("RESOLVED".equals(report.get("status"))) return shortage(reportId);
+          UUID workOrderId = id(report, "work_order_id");
+          var workOrder = lockWork(workOrderId);
           db.update(
               "UPDATE part_shortage_reports SET status='RESOLVED',open_guard=NULL,resolved_at=?,resolved_by_user_id=? WHERE id=?",
               now(),
               resolver,
               reportId);
+          if (workOrder.get("mechanic_id") != null) {
+            var mechanic = one("SELECT user_id FROM mechanics WHERE id=?", workOrder.get("mechanic_id"));
+            if (mechanic.get("user_id") != null)
+              notificationService.notifyPartShortageResolved(id(mechanic, "user_id"), workOrderId);
+          }
           return shortage(reportId);
         });
   }

@@ -95,6 +95,17 @@ public class NotificationService {
                         workOrderId)));
   }
 
+  @Transactional
+  public void notifyPartShortageResolved(UUID recipientUserId, UUID workOrderId) {
+    notifications.save(
+        new Notification(
+            recipientUserId,
+            Notification.Type.PART_SHORTAGE_RESOLVED,
+            "부품 부족 문제가 해결되었습니다.",
+            "담당 정비 작업의 부품 부족 신고가 해결되었습니다.",
+            workOrderId));
+  }
+
   private UUID requireUserId(String email) {
     return users
         .findByEmail(email)

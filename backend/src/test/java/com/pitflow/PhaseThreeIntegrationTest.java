@@ -2153,6 +2153,8 @@ class PhaseThreeIntegrationTest {
   @Test
   void mechanicShortageReportsAreOwnedNotifiedResolvedAndReopenable() throws Exception {
     var actor = assignedMechanic("phase3c-mechanic@example.com");
+    UUID otherMechanic = mechanicAccount("phase3c-other-mechanic@example.com", "P3C-OTHER", true);
+    UUID otherMechanicUser = db.queryForObject("SELECT user_id FROM mechanics WHERE id=?", UUID.class, otherMechanic);
     UUID own = work(appointment);
     UUID item = db.queryForObject("SELECT id FROM work_order_items WHERE work_order_id=?", UUID.class, own);
     UUID part = part("P3C-SHORT", "0");
@@ -2226,6 +2228,19 @@ class PhaseThreeIntegrationTest {
     mvc.perform(get("/api/admin/part-shortages").with(user(actor.email()).roles("MECHANIC")))
         .andExpect(status().isForbidden());
 
+    int unreadBeforeResolution = db.queryForObject(
+        "SELECT COUNT(*) FROM notifications WHERE recipient_user_id=? AND read_at IS NULL",
+        Integer.class, actor.userId());
+    mvc.perform(patch("/api/admin/part-shortages/" + report + "/resolve")
+            .with(user(actor.email()).roles("MECHANIC")).with(csrf())
+            .header("Idempotency-Key", UUID.randomUUID().toString()))
+        .andExpect(status().isForbidden());
+    mvc.perform(patch("/api/admin/part-shortages/" + UUID.randomUUID() + "/resolve")
+            .with(user(admin).roles("ADMIN")).with(csrf())
+            .header("Idempotency-Key", UUID.randomUUID().toString()))
+        .andExpect(status().isNotFound());
+    assertThat(notificationCount(actor.userId(), "PART_SHORTAGE_RESOLVED", own)).isZero();
+
     var resolved =
         ok("PATCH", "/api/admin/part-shortages/" + report + "/resolve", Map.of());
     assertThat(resolved.get("status").asText()).isEqualTo("RESOLVED");
@@ -2234,6 +2249,25 @@ class PhaseThreeIntegrationTest {
         .isEqualTo(users.findByEmail(admin).orElseThrow().getId().toString());
     assertThat(balance(part)).isEqualByComparingTo(beforeQuantity);
     assertThat(count("stock_movements")).isEqualTo(beforeMovements);
+    assertThat(notificationCount(actor.userId(), "PART_SHORTAGE_RESOLVED", own)).isEqualTo(1);
+    assertThat(notificationCount(otherMechanicUser, "PART_SHORTAGE_RESOLVED", own)).isZero();
+    assertThat(notificationCount(customer, "PART_SHORTAGE_RESOLVED", own)).isZero();
+    assertThat(notificationCount(users.findByEmail(admin).orElseThrow().getId(), "PART_SHORTAGE_RESOLVED", own)).isZero();
+
+    ok("PATCH", "/api/admin/part-shortages/" + report + "/resolve", Map.of());
+    assertThat(notificationCount(actor.userId(), "PART_SHORTAGE_RESOLVED", own)).isEqualTo(1);
+    mvc.perform(get("/api/notifications/unread-count").with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.count").value(unreadBeforeResolution + 1));
+    UUID resolvedNotification = db.queryForObject(
+        "SELECT id FROM notifications WHERE recipient_user_id=? AND type='PART_SHORTAGE_RESOLVED' AND work_order_id=?",
+        UUID.class, actor.userId(), own);
+    mvc.perform(patch("/api/notifications/" + resolvedNotification + "/read")
+            .with(user(actor.email()).roles("MECHANIC")).with(csrf()))
+        .andExpect(status().isNoContent());
+    mvc.perform(get("/api/notifications/unread-count").with(user(actor.email()).roles("MECHANIC")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.count").value(unreadBeforeResolution));
 
     var reopened =
         mechanicOk(

@@ -3,18 +3,19 @@ import { useEffect, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { BookingCalendarSettings } from "@/components/booking-calendar-settings";
+import { useAppToast } from "@/components/app-toast";
 import { AppointmentCard } from "@/components/appointment-card";
 import { api, errorText } from "@/lib/api";
 import { Appointment, AppointmentStatus, WorkBay, BookingPolicy, addDays, monthRange, seoulToday, dayLabel, timeLabel, statusLabel, actionLabel } from "@/lib/appointments";
 
 export default function AdminAppointmentsPage() {
+  const showToast = useAppToast();
   const { user } = useAuth();
   const [date, setDate] = useState(seoulToday);
   const [month, setMonth] = useState(() => seoulToday().slice(0, 7));
   const [data, setData] = useState<{ appointments: Appointment[]; bays: WorkBay[]; policy: BookingPolicy } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -52,7 +53,7 @@ export default function AdminAppointmentsPage() {
   const open = data ? Math.min(toMinute(data.policy.opensAt), ...active.map(a => toMinute(timeLabel(a.startsAt)))) : 540;
   const close = data ? Math.max(toMinute(data.policy.closesAt), ...active.map(a => toMinute(timeLabel(a.endsAt)))) : 1080;
   const times = Array.from({ length: (close - open) / 30 }, (_, i) => `${String(Math.floor((open + i * 30) / 60)).padStart(2, "0")}:${String((open + i * 30) % 60).padStart(2, "0")}`);
-  function moveDate(next: string) { if (next) { setDate(next); setMonth(next.slice(0, 7)); setNotice(""); } }
+  function moveDate(next: string) { if (next) { setDate(next); setMonth(next.slice(0, 7)); } }
   function moveMonth(offset: number) {
     const next = new Date(`${month}-01T12:00:00Z`);
     next.setUTCMonth(next.getUTCMonth() + offset);
@@ -64,16 +65,16 @@ export default function AdminAppointmentsPage() {
   async function change(status: AppointmentStatus) {
     if (!selected || busy) return;
     if (!window.confirm(`${selected.customerName}님의 예약을 ‘${statusLabel[status]}’ 상태로 변경하시겠습니까?`)) return;
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError("");
     try {
       await api(`/api/admin/appointments/${selected.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
-      setNotice(`‘${statusLabel[status]}’으로 변경했습니다.`); setRevision(n => n + 1);
-    } catch (e) { setError(errorText(e)); }
+      showToast(`‘${statusLabel[status]}’으로 변경했습니다.`, "success"); setRevision(n => n + 1);
+    } catch (e) { showToast(errorText(e), "error"); }
     finally { setBusy(false); }
   }
   return <>
     <div className="page-heading"><div><span className="eyebrow">SERVICE SCHEDULE</span><h1>예약 캘린더</h1><p>작업 공간별 일정을 확인하고 예약 상태를 관리하세요.</p></div><CalendarDays size={32} /></div>
-    <BookingCalendarSettings onSaved={() => { setRevision(n => n + 1); setNotice("휴무 설정을 저장했습니다."); }} />
+    <BookingCalendarSettings onSaved={() => { setRevision(n => n + 1); showToast("휴무 설정을 저장했습니다.", "success"); }} />
     <section className="calendar-panel admin-month-overview" aria-label="월간 예약 현황">
       <div className="section-heading"><div><span className="eyebrow">MONTHLY OVERVIEW</span><h2>{month.slice(0, 4)}년 {Number(month.slice(5))}월</h2></div>
         <div className="calendar-date-controls"><button type="button" className="button secondary" aria-label="이전 달" disabled={busy} onClick={() => moveMonth(-1)}><ChevronLeft size={18} /></button><button type="button" className="button secondary" disabled={busy} onClick={() => moveMonth(1)} aria-label="다음 달"><ChevronRight size={18} /></button></div>
@@ -95,7 +96,7 @@ export default function AdminAppointmentsPage() {
       <div className="calendar-date-controls"><button className="button secondary" aria-label="이전 날짜" disabled={busy} onClick={() => moveDate(addDays(date, -1))}><ChevronLeft size={18} /></button><label>조회 날짜<input type="date" value={date} disabled={busy} onChange={e => moveDate(e.target.value)} /></label><button className="button secondary" aria-label="다음 날짜" disabled={busy} onClick={() => moveDate(addDays(date, 1))}><ChevronRight size={18} /></button></div>
       <div className="calendar-date-controls"><button className="button secondary" disabled={busy} onClick={() => moveDate(seoulToday())}>오늘</button><button className="button secondary" disabled={loading || busy} onClick={() => setRevision(n => n + 1)}><RefreshCw size={16} />새로고침</button></div>
     </div>
-    {error && <div className="error" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
+    {error && <div className="error" role="alert">{error}</div>}
     {loading ? <p role="status">일정을 불러오는 중입니다…</p> : data && <>
       <div className="calendar-metrics"><div><span>전체 예약</span><strong>{dailyAppointments.length}<small>건</small></strong></div><div><span>확인 대기</span><strong>{dailyAppointments.filter(a => a.status === "PENDING").length}<small>건</small></strong></div><div><span>예약 확정</span><strong>{dailyAppointments.filter(a => a.status === "CONFIRMED").length}<small>건</small></strong></div><div><span>방문 완료</span><strong>{dailyAppointments.filter(a => a.status === "VISITED").length}<small>건</small></strong></div></div>
       <div className="calendar-layout">

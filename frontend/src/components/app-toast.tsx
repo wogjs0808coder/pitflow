@@ -8,27 +8,34 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 let nextToastId = 0;
 
 export function AppToastProvider({ children }: { children: React.ReactNode }) {
-  const [toast, setToast] = useState<Toast | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const showToast = useCallback((message: string, kind: Toast["kind"]) => {
-    setToast({ id: ++nextToastId, message, kind });
+    const toast = { id: ++nextToastId, message, kind };
+    setToasts((current) => [...current, toast].slice(-4));
   }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
+  const dismiss = useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
 
   return <ToastContext.Provider value={{ showToast }}>
     {children}
-    {toast && <div className="app-toast-layer">
-      <div className={`app-toast ${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"}>
-        <span className="app-toast-indicator" aria-hidden="true" />
-        <span>{toast.message}</span>
-        <button type="button" aria-label="알림 닫기" onClick={() => setToast(null)}>×</button>
-      </div>
+    {toasts.length > 0 && <div className="app-toast-layer">
+      {toasts.map((toast) => <ToastItem key={toast.id} toast={toast} dismiss={dismiss} />)}
     </div>}
   </ToastContext.Provider>;
+}
+
+function ToastItem({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => void }) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => dismiss(toast.id), 5000);
+    return () => window.clearTimeout(timer);
+  }, [toast.id, dismiss]);
+
+  return <div className={`app-toast ${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"}>
+    <span className="app-toast-indicator" aria-hidden="true" />
+    <span>{toast.message}</span>
+    <button type="button" aria-label="알림 닫기" onClick={() => dismiss(toast.id)}>×</button>
+  </div>;
 }
 
 export function useAppToast() {

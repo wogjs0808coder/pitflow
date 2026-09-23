@@ -251,11 +251,13 @@ nav {
 .topbar > span:first-child {
   font-weight: 600;
 }
+.topbar > div { min-width: 0; }
 .topbar-account {
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 60%;
+  white-space: nowrap;
 }
 main {
   padding: 38px 42px 24px;
@@ -2112,16 +2114,19 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
   min-width: 0;
 }
 
+.admin-workflow-bar { display: flex; align-items: center; border-bottom: 1px solid var(--line); background: var(--white); }
 .admin-workflow-tabs {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 11px 42px;
+  min-width: 0;
+  flex: 1;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line);
-  background: var(--white);
   scrollbar-width: thin;
 }
+.admin-clock { flex: 0 0 auto; padding: 0 42px 0 12px; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-clock-medium, .admin-clock-compact { display: none; }
 
 .admin-workflow-tab {
   flex: 0 0 auto;
@@ -2156,6 +2161,9 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
     padding-right: 24px;
     padding-left: 24px;
   }
+  .admin-clock { padding-right: 24px; }
+  .admin-clock-full { display: none; }
+  .admin-clock-medium { display: inline; }
 }
 
 @media (max-width: 640px) {
@@ -2169,6 +2177,23 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
     padding: 6px 10px;
     font-size: 0.78rem;
   }
+  .admin-clock { padding-right: 16px; }
+  .admin-clock-medium { display: none; }
+  .admin-clock-compact { display: inline; }
+}
+.notification-center { position: relative; }
+.notification-popup {
+  position: absolute; z-index: 50; top: calc(100% + 10px); right: 0;
+  width: min(360px, calc(100vw - 32px)); max-height: min(480px, calc(100dvh - 80px));
+  overflow-y: auto; padding: 14px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--white); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  color: var(--ink); overflow-wrap: anywhere;
+}
+.notification-popup-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 760px) {
+  .topbar { position: relative; }
+  .notification-center { position: static; }
+  .notification-popup { right: 12px; top: calc(100% + 4px); width: min(360px, calc(100vw - 24px)); }
 }
 /* Phase 3E — admin work workspace */
 
@@ -2448,6 +2473,8 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
   z-index: 110;
   width: min(420px, calc(100vw - 32px));
   pointer-events: none;
+  display: grid;
+  gap: 8px;
 }
 
 .app-toast {
@@ -2481,7 +2508,7 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
 }
 
 @media (max-width: 760px) {
-  .app-toast-layer { top: 12px; right: 12px; width: calc(100vw - 24px); }
+  .app-toast-layer { top: auto; bottom: 12px; right: 12px; width: calc(100vw - 24px); }
 }
 
 .work-feedback-layer {

@@ -1,8 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Wrench, Clock3, Pencil, X } from "lucide-react";
-import { api, errorText, ServiceItem, won } from "@/lib/api";
+import { api, ApiError, errorText, ServiceItem, won } from "@/lib/api";
 import { useAuth } from "./auth-provider";
+import { useAppToast } from "./app-toast";
 
 type AdminPart = {
   id: string;
@@ -17,12 +18,12 @@ const WASHER_SERVICE_ID =
   "f6b2e966-cf84-3576-9a3f-a64ebf1de473";
 
 export function Catalog({ admin = false }: { admin?: boolean }) {
+  const showToast = useAppToast();
   const { user } = useAuth();
   const allowed = !admin || user?.role === "ADMIN";
   const [items, setItems] = useState<ServiceItem[] | null>(null);
   const [parts, setParts] = useState<AdminPart[]>([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<ServiceItem | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,7 +58,6 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
     setEditing(item);
     setShowForm(true);
     setError("");
-    setNotice("");
   }
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
@@ -89,9 +89,10 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
       );
       await load();
       setShowForm(false);
-      setNotice("정비 항목과 예상 부품 구성을 저장했습니다.");
+      showToast("정비 항목과 예상 부품 구성을 저장했습니다.", "success");
     } catch (e) {
-      setError(errorText(e));
+      if (e instanceof ApiError && e.status === 400) setError(errorText(e));
+      else showToast(errorText(e), "error");
     } finally {
       setBusy(false);
     }
@@ -135,11 +136,6 @@ export function Catalog({ admin = false }: { admin?: boolean }) {
               다시 시도
             </button>
           )}
-        </div>
-      )}
-      {notice && (
-        <div className="notice" role="status">
-          {notice}
         </div>
       )}
       {showForm && (
