@@ -22,15 +22,17 @@ https://pitflow-api.onrender.com
 
 | 영역 | 역할 |
 | --- | --- |
-| `/api/auth` | 회원가입, 로그인, 로그아웃 |
+| `/api/auth` | 회원가입, 로그인, 로그아웃, 계정 정보·복구 |
 | `/api/vehicles` | 고객 차량 |
 | `/api/services` | 정비 서비스 |
+| `/api/parts-guide` | 고객 부품 안내 |
 | `/api/appointments` | 예약 |
 | `/api/work-orders` | 정비 작업 |
 | `/api/billing` | 고객 정산과 결제 |
 | `/api/admin/*` | 관리자 기능 |
-| `/api/finance/*` | 원가와 재무 |
-| `/api/notifications` | 업무 알림 |
+| `/api/admin/finance/*` | 원가와 재무 |
+| `/api/mechanic/*` | 정비사 작업과 부품 |
+| `/api/notifications` | 업무 알림 조회, 미확인 수, 읽음 처리 |
 
 세부 endpoint는 각 Controller source를 기준으로 합니다.
 
@@ -51,6 +53,8 @@ ADMIN
 정비사는 자신에게 배정된 작업만 변경할 수 있습니다.
 
 관리자 기능은 Backend에서 ADMIN 역할을 확인합니다.
+
+관리자 계정 관리 중 메인 관리자 전용 작업은 별도로 권한을 확인합니다. 이메일·비밀번호 변경 또는 계정 비활성화 뒤 기존 세션은 다음 요청에서 무효화됩니다.
 
 Frontend에서 버튼을 숨기는 것은 편의를 위한 것이며 실제 권한 검사는 Backend에서 수행합니다.
 
