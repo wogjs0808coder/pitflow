@@ -1,11 +1,12 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, errorText } from "@/lib/api";
+import { api, ApiError, errorText } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { useWorkCommand } from "@/components/work-command";
 import { FinanceSettings } from "@/lib/finance";
 import { newPasswordError } from "@/lib/password";
+import { useAppToast } from "@/components/app-toast";
 
 type MechanicAccount = {
   id: string;
@@ -21,6 +22,7 @@ type MechanicAccount = {
 };
 
 export default function MechanicsPage() {
+  const showToast = useAppToast();
   const { user } = useAuth();
   const [mechanics, setMechanics] = useState<MechanicAccount[]>([]);
   const [error, setError] = useState("");
@@ -70,8 +72,10 @@ export default function MechanicsPage() {
       });
       form.reset();
       reload();
+      showToast("정비사 정보를 저장했습니다.", "success");
     } catch (reason) {
-      setError(errorText(reason));
+      if (reason instanceof ApiError && (reason.status === 400 || reason.status === 409)) setError(errorText(reason));
+      else showToast(errorText(reason), "error");
     } finally {
       setBusy(false);
     }
@@ -154,7 +158,8 @@ export default function MechanicsPage() {
                 method: "PATCH", body: JSON.stringify({ active: !mechanic.active }),
               });
               reload();
-            } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
+              showToast(mechanic.active ? "정비사를 비활성화했습니다." : "정비사를 활성화했습니다.", "success");
+            } catch (reason) { showToast(errorText(reason), "error"); } finally { setBusy(false); }
           }}>{mechanic.active ? "비활성화" : "활성화"}</button>
         </article>
       ))}

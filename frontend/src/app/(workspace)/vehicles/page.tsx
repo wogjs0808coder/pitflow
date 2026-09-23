@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CarFront, Plus, Pencil, Trash2, X } from "lucide-react";
-import { api, errorText, Vehicle } from "@/lib/api";
+import { api, ApiError, errorText, Vehicle } from "@/lib/api";
+import { useAppToast } from "@/components/app-toast";
 export default function VehiclesPage() {
+  const showToast = useAppToast();
   const [cars, setCars] = useState<Vehicle[] | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<Vehicle | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -24,7 +25,6 @@ export default function VehiclesPage() {
     setEditing(car);
     setShowForm(true);
     setError("");
-    setNotice("");
   }
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -45,9 +45,10 @@ export default function VehiclesPage() {
       );
       await load();
       setShowForm(false);
-      setNotice(editing ? "차량 정보를 수정했습니다." : "차량을 등록했습니다.");
+      showToast(editing ? "차량 정보를 수정했습니다." : "차량을 등록했습니다.", "success");
     } catch (e) {
-      setError(errorText(e));
+      if (e instanceof ApiError && e.status === 400) setError(errorText(e));
+      else showToast(errorText(e), "error");
     } finally {
       setBusy(false);
     }
@@ -56,14 +57,13 @@ export default function VehiclesPage() {
     if (!window.confirm(`${car.plateNumber} 차량을 삭제하시겠습니까?`)) return;
     setBusy(true);
     setError("");
-    setNotice("");
     try {
       await api<void>(`/api/vehicles/${car.id}`, { method: "DELETE" });
       await load();
       if (editing?.id === car.id) setShowForm(false);
-      setNotice("차량을 삭제했습니다.");
+      showToast("차량을 삭제했습니다.", "success");
     } catch (e) {
-      setError(errorText(e));
+      showToast(errorText(e), "error");
     } finally {
       setBusy(false);
     }
@@ -98,11 +98,6 @@ export default function VehiclesPage() {
               다시 시도
             </button>
           )}
-        </div>
-      )}
-      {notice && (
-        <div className="notice" role="status">
-          {notice}
         </div>
       )}
       {showForm && (

@@ -63,6 +63,15 @@ export function NotificationCenter() {
     return () => window.clearInterval(timer);
   }, [refreshCount]);
 
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+
   async function toggleOpen() {
     const next = !open;
     setOpen(next);
@@ -93,9 +102,14 @@ export function NotificationCenter() {
       }
     }
 
-    if (notification.workOrderId && user) {
+    if (notification.type === "PART_SHORTAGE" && user?.role === "ADMIN") {
+      setOpen(false);
+      window.location.assign("/admin/shortages");
+    } else if (notification.workOrderId && user) {
       const base =
-        user.role === "ADMIN"
+        notification.type === "PART_SHORTAGE_RESOLVED"
+          ? "/mechanic/work-orders"
+          : user.role === "ADMIN"
           ? "/admin/work-orders"
           : user.role === "MECHANIC"
             ? "/mechanic/work-orders"
@@ -127,7 +141,7 @@ export function NotificationCenter() {
   }
 
   return (
-    <div style={{ position: "relative" }}>
+    <div className="notification-center">
       <button
         type="button"
         className="icon-button"
@@ -137,6 +151,7 @@ export function NotificationCenter() {
             : "알림"
         }
         aria-expanded={open}
+        aria-controls={open ? "notification-popup" : undefined}
         onClick={() => void toggleOpen()}
         style={{ position: "relative" }}
       >
@@ -167,24 +182,7 @@ export function NotificationCenter() {
       </button>
 
       {open && (
-        <section
-          aria-label="알림 목록"
-          style={{
-            position: "absolute",
-            zIndex: 50,
-            top: "calc(100% + 10px)",
-            right: 0,
-            width: "min(360px, calc(100vw - 32px))",
-            maxHeight: "480px",
-            overflowY: "auto",
-            padding: "14px",
-            border: "1px solid #d1d5db",
-            borderRadius: "12px",
-            background: "#fff",
-            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.14)",
-            color: "#111827",
-          }}
-        >
+        <section id="notification-popup" aria-label="알림 목록" className="notification-popup">
           <div
             style={{
               display: "flex",
@@ -196,11 +194,10 @@ export function NotificationCenter() {
           >
             <strong>알림</strong>
 
-            {unreadCount > 0 && (
-              <button type="button" onClick={() => void readAll()}>
-                모두 읽음
-              </button>
-            )}
+            <div className="notification-popup-actions">
+              {unreadCount > 0 && <button type="button" onClick={() => void readAll()}>모두 읽음</button>}
+              <button type="button" onClick={() => setOpen(false)} aria-label="알림 목록 닫기">닫기</button>
+            </div>
           </div>
 
           {error && (

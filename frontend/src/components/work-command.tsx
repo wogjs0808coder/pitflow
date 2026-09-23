@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, errorText } from "@/lib/api";
 import { useAuth } from "./auth-provider";
+import { useAppToast } from "./app-toast";
 
 type Job = {
   key: string;
@@ -63,6 +64,7 @@ function isConclusiveFailure(error: unknown) {
 // Session storage contains an operation request, never an auth/CSRF token.
 export function useWorkCommand(reload: () => Promise<void>) {
   const { user } = useAuth();
+  const showToast = useAppToast();
 
   const storage = user
     ? `pitflow-operation-${user.id}`
@@ -170,17 +172,17 @@ export function useWorkCommand(reload: () => Promise<void>) {
 
       sessionStorage.removeItem(storage);
       setPending(null);
+      setMessage("");
 
       success = true;
-      setMessageTone("success");
-      setMessage("처리가 완료되었습니다.");
+      showToast("처리가 완료되었습니다.", "success");
     } catch (error) {
       if (isConclusiveFailure(error)) {
         sessionStorage.removeItem(storage);
         setPending(null);
+        setMessage("");
 
-        setMessageTone("error");
-        setMessage(errorText(error));
+        showToast(errorText(error), "error");
       } else {
         setMessageTone("warning");
         setMessage(
@@ -211,8 +213,8 @@ export function useWorkCommand(reload: () => Promise<void>) {
     sessionStorage.removeItem(storage);
     setPending(null);
 
-    setMessageTone("success");
-    setMessage("보류 요청을 삭제했습니다.");
+    setMessage("");
+    showToast("보류 요청을 삭제했습니다.", "success");
   }
 
   return {

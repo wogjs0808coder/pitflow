@@ -11,6 +11,7 @@ import {
   seoulToday,
 } from "@/lib/appointments";
 import { AppointmentCard } from "@/components/appointment-card";
+import { useAppToast } from "@/components/app-toast";
 
 export default function AppointmentsPage() {
   return <Suspense fallback={<p role="status">예약 내역을 불러오는 중입니다…</p>}>
@@ -19,6 +20,7 @@ export default function AppointmentsPage() {
 }
 
 function AppointmentsContent() {
+  const showToast = useAppToast();
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedMonth = searchParams.get("month");
@@ -28,7 +30,6 @@ function AppointmentsContent() {
     useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
 
@@ -60,16 +61,6 @@ function AppointmentsContent() {
     return () => controller.abort();
   }, [month, revision]);
 
-  useEffect(() => {
-    if (!notice) return;
-
-    const timer = window.setTimeout(() => {
-      setNotice("");
-    }, 4500);
-
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-
   async function cancel(a: Appointment) {
     if (
       !window.confirm(
@@ -81,17 +72,16 @@ function AppointmentsContent() {
 
     setBusy(a.id);
     setError("");
-    setNotice("");
 
     try {
       await api(`/api/appointments/${a.id}/cancel`, {
         method: "POST",
       });
 
-      setNotice("예약을 취소했습니다.");
+      showToast("예약을 취소했습니다.", "success");
       setRevision((n) => n + 1);
     } catch (e) {
-      setError(errorText(e));
+      showToast(errorText(e), "error");
     } finally {
       setBusy(null);
     }
@@ -150,23 +140,6 @@ function AppointmentsContent() {
         </div>
       )}
 
-      {notice && (
-        <div
-          className="customer-booking-feedback"
-          role="status"
-        >
-          <span aria-hidden />
-          <strong>{notice}</strong>
-
-          <button
-            type="button"
-            aria-label="알림 닫기"
-            onClick={() => setNotice("")}
-          >
-            닫기
-          </button>
-        </div>
-      )}
 
       {loading ? (
         <p role="status">예약 내역을 불러오는 중입니다…</p>

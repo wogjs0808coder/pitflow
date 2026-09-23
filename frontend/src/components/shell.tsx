@@ -18,6 +18,7 @@ import {
 import { useAuth } from "./auth-provider";
 import { errorText } from "@/lib/api";
 import { NotificationCenter } from "./notification-center";
+import { AdminClock } from "./admin-clock";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { user, loading, error, refresh, logout } = useAuth();
@@ -366,11 +367,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </header>
 
         {user.role === "ADMIN" && (
-          <div
-            className="admin-workflow-tabs"
-            role="navigation"
-            aria-label="관리자 업무 바로가기"
-          >
+          <div className="admin-workflow-bar">
+          <nav className="admin-workflow-tabs" aria-label="관리자 업무 바로가기">
             {adminWorkflowLinks.map(({ href, label }) => (
               <Link
                 key={href}
@@ -385,6 +383,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 {label}
               </Link>
             ))}
+          </nav>
+          <AdminClock />
           </div>
         )}
 

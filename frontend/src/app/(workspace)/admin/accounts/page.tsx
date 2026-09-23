@@ -2,9 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { api, errorText } from "@/lib/api";
+import { api, ApiError, errorText } from "@/lib/api";
 import { newPasswordError } from "@/lib/password";
 import { BirthDateInput } from "@/components/birth-date-input";
+import { useAppToast } from "@/components/app-toast";
 
 type AdminAccount = {
   id: string; name: string; email: string; phoneNumber: string | null;
@@ -17,6 +18,7 @@ type AccountAudit = {
 };
 
 export default function AdminAccountsPage() {
+  const showToast = useAppToast();
   const { user } = useAuth();
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [audit, setAudit] = useState<AccountAudit[]>([]);
@@ -50,16 +52,19 @@ export default function AdminAccountsPage() {
         email: String(data.get("email")).trim(), password: String(data.get("password")),
         phoneNumber: String(data.get("phoneNumber")).trim(), birthDate: String(data.get("birthDate")),
       }) });
-      element.reset(); reload();
-    } catch (reason) { setError(errorText(reason)); }
+      element.reset(); reload(); showToast("관리자 계정을 생성했습니다.", "success");
+    } catch (reason) {
+      if (reason instanceof ApiError && (reason.status === 400 || reason.status === 409)) setError(errorText(reason));
+      else showToast(errorText(reason), "error");
+    }
     finally { setBusy(false); }
   }
 
   async function deactivate(account: AdminAccount) {
     if (!window.confirm(`${account.name} 계정을 비활성화할까요? 기존 업무 기록은 보존됩니다.`)) return;
     setBusy(true); setError("");
-    try { await api<void>(`/api/admin/accounts/${account.id}`, { method: "DELETE" }); reload(); }
-    catch (reason) { setError(errorText(reason)); }
+    try { await api<void>(`/api/admin/accounts/${account.id}`, { method: "DELETE" }); reload(); showToast("관리자 계정을 비활성화했습니다.", "success"); }
+    catch (reason) { showToast(errorText(reason), "error"); }
     finally { setBusy(false); }
   }
 

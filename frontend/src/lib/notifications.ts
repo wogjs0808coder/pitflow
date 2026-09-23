@@ -3,7 +3,8 @@ import { api } from "./api";
 export type NotificationType =
   | "WORK_ASSIGNED"
   | "WORK_COMPLETED"
-  | "PART_SHORTAGE";
+  | "PART_SHORTAGE"
+  | "PART_SHORTAGE_RESOLVED";
 
 export type Notification = {
   id: string;
