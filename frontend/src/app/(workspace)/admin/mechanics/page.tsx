@@ -5,6 +5,7 @@ import { api, errorText } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { useWorkCommand } from "@/components/work-command";
 import { FinanceSettings } from "@/lib/finance";
+import { newPasswordError } from "@/lib/password";
 
 type MechanicAccount = {
   id: string;
@@ -55,6 +56,11 @@ export default function MechanicsPage() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const enteredPassword = data.get("password");
+    if (typeof enteredPassword === "string") {
+      const policyError = newPasswordError(enteredPassword);
+      if (policyError) { setError(policyError); return; }
+    }
     setBusy(true);
     setError("");
     try {
@@ -94,7 +100,7 @@ export default function MechanicsPage() {
             <label>사번<input name="code" required maxLength={40} /></label>
             <label>이름<input name="name" required maxLength={50} /></label>
             <label>이메일<input name="email" type="email" required maxLength={254} /></label>
-            <label>초기 비밀번호<input name="password" type="password" required minLength={12} maxLength={64} autoComplete="new-password" /></label>
+            <label>초기 비밀번호<input name="password" type="password" required placeholder="7~20자" autoComplete="new-password" /></label>
             <label>시간당 원가 (원, 선택)<input name="hourlyCost" type="number" min="0" step="1" placeholder="미입력 시 미확정" /></label>
             <label><input name="active" type="checkbox" defaultChecked /> 활성</label>
             <button className="button primary">등록</button>
@@ -136,7 +142,7 @@ export default function MechanicsPage() {
             }))}>
               <fieldset disabled={busy}>
                 <label>이메일<input name="email" type="email" required maxLength={254} /></label>
-                <label>초기 비밀번호<input name="password" type="password" required minLength={12} maxLength={64} autoComplete="new-password" /></label>
+                <label>초기 비밀번호<input name="password" type="password" required placeholder="7~20자" autoComplete="new-password" /></label>
                 <button className="button secondary">기존 정비사에 계정 연결</button>
               </fieldset>
             </form>

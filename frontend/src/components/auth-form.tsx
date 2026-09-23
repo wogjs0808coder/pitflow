@@ -11,6 +11,8 @@ import {
   CarFront,
 } from "lucide-react";
 import { api, errorText, User } from "@/lib/api";
+import { newPasswordError } from "@/lib/password";
+import { BirthDateInput } from "./birth-date-input";
 import { useAuth } from "./auth-provider";
 export function AuthForm({ register = false }: { register?: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -26,6 +28,8 @@ export function AuthForm({ register = false }: { register?: boolean }) {
     const password = String(form.get("password"));
     try {
       if (register) {
+        const policyError = newPasswordError(password);
+        if (policyError) { setError(policyError); return; }
         if (password !== form.get("confirm")) {
           setError("비밀번호 확인이 일치하지 않습니다.");
           return;
@@ -36,6 +40,8 @@ export function AuthForm({ register = false }: { register?: boolean }) {
             email,
             password,
             name: String(form.get("name")).trim(),
+            phoneNumber: String(form.get("phoneNumber")).trim(),
+            birthDate: String(form.get("birthDate")),
           }),
         });
       }
@@ -44,7 +50,15 @@ export function AuthForm({ register = false }: { register?: boolean }) {
         body: new URLSearchParams({ email, password }),
       });
       await refresh();
-      router.replace(loggedIn.role === "MECHANIC" ? "/mechanic/work-orders" : "/dashboard");
+      router.replace(
+        loggedIn.role !== "MECHANIC" && !loggedIn.profileComplete
+          ? "/account"
+          : loggedIn.role === "MECHANIC"
+            ? "/mechanic/work-orders"
+            : loggedIn.role === "ADMIN"
+              ? "/admin/appointments"
+              : "/dashboard",
+      );
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -129,6 +143,15 @@ export function AuthForm({ register = false }: { register?: boolean }) {
                 placeholder="name@example.com"
               />
             </label>
+            {register && (
+              <>
+                <label>
+                  휴대폰 번호
+                  <input name="phoneNumber" type="tel" autoComplete="tel" required placeholder="010-1234-5678" />
+                </label>
+                <BirthDateInput />
+              </>
+            )}
             <label>
               비밀번호
               <input
@@ -136,10 +159,9 @@ export function AuthForm({ register = false }: { register?: boolean }) {
                 name="password"
                 autoComplete={register ? "new-password" : "current-password"}
                 required
-                minLength={register ? 12 : undefined}
-                maxLength={64}
+                maxLength={register ? undefined : 64}
                 placeholder={
-                  register ? "12~64자 비밀번호" : "비밀번호를 입력하세요"
+                  register ? "7~20자 비밀번호" : "비밀번호를 입력하세요"
                 }
               />
             </label>
@@ -151,8 +173,6 @@ export function AuthForm({ register = false }: { register?: boolean }) {
                   name="confirm"
                   autoComplete="new-password"
                   required
-                  minLength={12}
-                  maxLength={64}
                   placeholder="비밀번호를 다시 입력하세요"
                 />
               </label>
@@ -173,6 +193,13 @@ export function AuthForm({ register = false }: { register?: boolean }) {
               {register ? "로그인" : "회원가입"}
             </Link>
           </p>
+          {!register && (
+            <>
+              <p className="auth-switch"><Link href="/find-id">아이디 찾기</Link> · <Link href="/reset-password">비밀번호 찾기</Link></p>
+              <hr />
+              <p className="auth-switch"><Link href="/admin-register">관리자 신규 가입</Link></p>
+            </>
+          )}
         </div>
       </section>
     </div>

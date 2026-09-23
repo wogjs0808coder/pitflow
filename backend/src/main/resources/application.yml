@@ -37,6 +37,7 @@ pitflow:
   bootstrap:
     admin-email: ${PITFLOW_ADMIN_EMAIL:}
     admin-password: ${PITFLOW_ADMIN_PASSWORD:}
+    admin-invite-code: ${PITFLOW_ADMIN_INVITE_CODE:}
   toss:
     client-key: ${TOSS_CLIENT_KEY:}
     secret-key: ${TOSS_SECRET_KEY:}

@@ -33,6 +33,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
   }, [loading, user, error, router]);
 
+  useEffect(() => {
+    if (!loading && user && user.role !== "MECHANIC" && !user.profileComplete && path !== "/account") {
+      router.replace("/account");
+    }
+  }, [loading, user, path, router]);
+
   if (loading) {
     return (
       <div className="loading-screen" role="status">
@@ -53,6 +59,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   if (!user) {
     return null;
   }
+
+  if (user.role !== "MECHANIC" && !user.profileComplete && path !== "/account") return null;
 
   const isActive = (href: string) =>
     path === href || path.startsWith(`${href}/`);
@@ -91,6 +99,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           label: "정비 이력·수납",
           icon: Settings2,
         },
+        { href: "/account", label: "내 정보", icon: Settings2 },
       ],
     },
   ];
@@ -104,6 +113,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           label: "내 정비 작업",
           icon: Wrench,
         },
+        { href: "/account", label: "내 정보", icon: Settings2 },
       ],
     },
   ];
@@ -172,6 +182,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
           label: "정비 항목 관리",
           icon: Settings2,
         },
+        ...(user.mainAdmin ? [{ href: "/admin/accounts", label: "관리자 정보", icon: Settings2 }] : []),
+        { href: "/account", label: "내 정보", icon: Settings2 },
       ],
     },
   ];
@@ -300,13 +312,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
           <div className="profile-text">
             <strong>{user.name}</strong>
-            <span>
+            <Link href="/account">
               {user.role === "ADMIN"
                 ? "관리자"
                 : user.role === "MECHANIC"
                   ? "정비사"
-                  : "고객"}
-            </span>
+                  : "고객"} · 내 정보
+            </Link>
           </div>
 
           <button
@@ -349,7 +361,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             }}
           >
             <NotificationCenter />
-            <span className="topbar-account">{user.email}</span>
+            <Link href="/account" className="topbar-account">내 정보 · {user.email}</Link>
           </div>
         </header>
 
