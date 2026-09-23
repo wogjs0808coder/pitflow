@@ -1,5 +1,5 @@
 "use client";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "./auth-provider";
 import { api, errorText, won } from "@/lib/api";
@@ -26,6 +26,13 @@ type PickerPart = Pick<Part, "id" | "sku" | "name" | "unit"> & {
   quantity?: Part["quantity"];
 };
 
+function workCategory(w: Work) {
+  if (w.released_at) return "released";
+  if (w.status === "COMPLETED") return "completed";
+  if (w.status === "CANCELLED") return "cancelled";
+  return "active";
+}
+
 export function WorkOrders({
   admin = false,
   mechanic = false,
@@ -43,9 +50,13 @@ export function WorkOrders({
   const [selected, setSelected] = useState("");
   const [requestedWorkOrderId, setRequestedWorkOrderId] = useState("");
   const [detail, setDetail] = useState<WorkDetail | null>(null);
+  const [detailRefreshing, setDetailRefreshing] = useState(false);
+  const [detailFailed, setDetailFailed] = useState(false);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const deepLinkHandled = useRef(false);
   const [date, setDate] = useState(seoulToday);
   const [bookings, setBookings] = useState<Appointment[]>([]);
   const [bookingError, setBookingError] = useState("");
@@ -81,7 +92,6 @@ export function WorkOrders({
     const c = new AbortController();
     setLoading(true);
     setError("");
-    setDetail(null);
     Promise.all([
       api<Work[]>(base, { signal: c.signal }),
       admin
@@ -99,6 +109,7 @@ export function WorkOrders({
       .then(([w, m, p, invoiceRows]) => {
         if (!c.signal.aborted) {
           setOrders(w);
+          setOrdersLoaded(true);
           setMechanics(m);
           setParts(p);
           setInvoices(invoiceRows);
@@ -113,19 +124,35 @@ export function WorkOrders({
     return () => c.abort();
   }, [base, admin, mechanic, permitted, revision]);
   useEffect(() => {
-    if (!requestedWorkOrderId || !permitted) return;
-
+    if (!requestedWorkOrderId || !permitted || !ordersLoaded || deepLinkHandled.current) return;
+    deepLinkHandled.current = true;
     if (orders.some((order) => order.id === requestedWorkOrderId)) {
       setQuery("");
       setFilter("all");
       setSelected(requestedWorkOrderId);
+    } else {
+      setError("요청한 작업을 현재 목록에서 찾을 수 없습니다.");
     }
-  }, [requestedWorkOrderId, orders, permitted]);
+  }, [requestedWorkOrderId, orders, ordersLoaded, permitted]);
 
   useEffect(() => {
-    setDetail(null);
-    if (!selected || !permitted) return;
+    if (!selected || !ordersLoaded) return;
+    const visible = orders.some((order) => order.id === selected
+      && (filter === "all" || workCategory(order) === filter)
+      && `${order.plate_number} ${order.vehicle_label} ${order.mechanic_name ?? ""}`
+        .toLowerCase().includes(query.toLowerCase()));
+    if (!visible) {
+      setSelected("");
+      setDetail(null);
+    }
+  }, [selected, orders, ordersLoaded, filter, query]);
+
+  useEffect(() => {
+    setDetail((current) => current?.id === selected ? current : null);
+    if (!selected || !permitted) { setDetailRefreshing(false); setDetailFailed(false); return; }
     const c = new AbortController();
+    setDetailRefreshing(true);
+    setDetailFailed(false);
     api<WorkDetail>(`${base}/${selected}`, { signal: c.signal })
       .then((d) => {
         if (!c.signal.aborted) {
@@ -136,7 +163,10 @@ export function WorkOrders({
         }
       })
       .catch((e) => {
-        if (!c.signal.aborted) setError(errorText(e));
+        if (!c.signal.aborted) { setError(errorText(e)); setDetailFailed(true); }
+      })
+      .finally(() => {
+        if (!c.signal.aborted) setDetailRefreshing(false);
       });
     return () => c.abort();
   }, [base, selected, permitted, revision]);
@@ -170,14 +200,6 @@ export function WorkOrders({
         {admin || mechanic ? "이 화면을 이용할 권한이 없습니다." : "로그인이 필요합니다."}
       </p>
     );
-  const category = (w: Work) =>
-    w.released_at
-      ? "released"
-      : w.status === "COMPLETED"
-        ? "completed"
-        : w.status === "CANCELLED"
-          ? "cancelled"
-          : "active";
   const stages = [
     ["active", "진행 중"],
     ["completed", "정비 완료·출고 대기"],
@@ -187,12 +209,12 @@ export function WorkOrders({
   ];
   const shown = orders.filter(
     (w) =>
-      (filter === "all" || category(w) === filter) &&
+      (filter === "all" || workCategory(w) === filter) &&
       `${w.plate_number} ${w.vehicle_label} ${w.mechanic_name ?? ""}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
-  const disabled = command.blocked || loading;
+  const disabled = command.blocked || loading || detailRefreshing || detailFailed;
   const activeInvoice = detail
     ? invoices.find(
         (invoice) =>
@@ -550,7 +572,7 @@ export function WorkOrders({
             >
               {label} ·{" "}
               {
-                orders.filter((w) => key === "all" || category(w) === key)
+                orders.filter((w) => key === "all" || workCategory(w) === key)
                   .length
               }
             </button>
@@ -570,7 +592,8 @@ export function WorkOrders({
           />
         </label>
       </div>
-      {loading ? (
+      {loading && ordersLoaded && <p className="muted" role="status">작업 데이터를 갱신하는 중입니다…</p>}
+      {loading && !ordersLoaded ? (
         <p role="status">작업 목록을 불러오는 중입니다…</p>
       ) : (
         <div
@@ -600,7 +623,7 @@ export function WorkOrders({
                 className={`work-panel work-select ${selected === w.id ? "selected-work" : ""}`}
                 onClick={() => setSelected(w.id)}
               >
-                <span className={`work-stage stage-${category(w)}`}>
+                <span className={`work-stage stage-${workCategory(w)}`}>
                   {listLabel(w)}
                 </span>
                 {w.released_at && (
@@ -648,6 +671,8 @@ export function WorkOrders({
                 <h2 className="work-detail-title">
                   {detail.plate_number} · {workLabel[detail.status]}
                 </h2>
+                {detailRefreshing && <p className="muted" role="status">작업 상세를 갱신하는 중입니다…</p>}
+                {detailFailed && <p className="error" role="alert">최신 작업 상세를 확인하지 못했습니다. 새로고침 후 다시 처리해 주세요.</p>}
                 <p>
                   입고 {detail.received_mileage.toLocaleString()} km · 담당{" "}
                   {detail.mechanic_name ?? "미배정"}
