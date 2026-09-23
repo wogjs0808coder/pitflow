@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/components/auth-provider";
+import { AppToastProvider } from "@/components/app-toast";
 import "./globals.css";
 export const metadata: Metadata = {
   title: "PitFlow | 차량 정비 관리",
@@ -11,7 +12,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AppToastProvider><AuthProvider>{children}</AuthProvider></AppToastProvider>
       </body>
     </html>
   );

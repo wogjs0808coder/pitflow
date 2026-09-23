@@ -1,12 +1,15 @@
 package com.pitflow.auth;
 
 import com.pitflow.user.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.security.Principal;
 import java.time.LocalDate;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -62,9 +65,27 @@ public class AuthController {
   }
 
   @PutMapping("/profile")
-  public UserView updateProfile(Principal principal, @Valid @RequestBody UpdateProfileRequest request) {
-    return accounts.updateProfile(principal, request.currentPassword(), request.name(),
-        request.phoneNumber(), request.birthDate());
+  public UserView updateProfile(Principal principal, HttpServletRequest servletRequest,
+      @Valid @RequestBody UpdateProfileRequest request) {
+    var updated = accounts.updateProfile(principal, request.currentPassword(), request.name(),
+        request.phoneNumber(), request.birthDate(), request.email());
+    return finishEmailChange(principal, servletRequest, updated);
+  }
+
+  @PutMapping("/profile/email")
+  public UserView changeMechanicEmail(Principal principal, HttpServletRequest servletRequest,
+      @Valid @RequestBody EmailChangeRequest request) {
+    var updated = accounts.changeMechanicEmail(principal, request.currentPassword(), request.email());
+    return finishEmailChange(principal, servletRequest, updated);
+  }
+
+  private UserView finishEmailChange(Principal principal, HttpServletRequest request, UserView updated) {
+    if (!principal.getName().equals(updated.email())) {
+      HttpSession session = request.getSession(false);
+      if (session != null) session.invalidate();
+      SecurityContextHolder.clearContext();
+    }
+    return updated;
   }
 
   @PutMapping("/password")
@@ -93,7 +114,9 @@ public class AuthController {
       @NotNull LocalDate birthDate) {}
 
   public record UpdateProfileRequest(@NotBlank String currentPassword, @NotBlank String name,
-      @NotBlank String phoneNumber, @NotNull LocalDate birthDate) {}
+      @NotBlank String phoneNumber, @NotNull LocalDate birthDate, String email) {}
+
+  public record EmailChangeRequest(@NotBlank String currentPassword, String email) {}
 
   public record ChangePasswordRequest(@NotBlank String currentPassword, @NotBlank String newPassword) {}
 }

@@ -2,6 +2,10 @@ package com.pitflow.auth;
 
 import com.pitflow.common.ApiException;
 import com.pitflow.user.*;
+import jakarta.validation.Validator;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.Principal;
@@ -23,13 +27,15 @@ public class AccountService {
   private final UserRepository users;
   private final PasswordEncoder passwords;
   private final JdbcTemplate db;
+  private final Validator validator;
   private final String inviteCode;
 
-  public AccountService(UserRepository users, PasswordEncoder passwords, JdbcTemplate db,
+  public AccountService(UserRepository users, PasswordEncoder passwords, JdbcTemplate db, Validator validator,
       @Value("${pitflow.bootstrap.admin-invite-code:}") String inviteCode) {
     this.users = users;
     this.passwords = passwords;
     this.db = db;
+    this.validator = validator;
     this.inviteCode = inviteCode;
   }
 
@@ -47,6 +53,16 @@ public class AccountService {
   }
 
   public static String email(String value) { return value.strip().toLowerCase(Locale.ROOT); }
+
+  private String validatedEmail(String value) {
+    if (value == null) throw new ApiException(HttpStatus.BAD_REQUEST, "이메일을 입력해 주세요.");
+    String normalized = email(value);
+    if (!validator.validate(new EmailValue(normalized)).isEmpty())
+      throw new ApiException(HttpStatus.BAD_REQUEST, "이메일 형식을 확인해 주세요.");
+    return normalized;
+  }
+
+  private record EmailValue(@NotBlank @Email @Size(max = 254) String value) {}
 
   public static String phone(String value) {
     if (value == null) throw new ApiException(HttpStatus.BAD_REQUEST, "휴대폰 번호를 입력해 주세요.");
@@ -137,16 +153,42 @@ public class AccountService {
 
   @Transactional
   public UserView updateProfile(Principal principal, String currentPassword, String name,
-      String phone, LocalDate birthDate) {
+      String phone, LocalDate birthDate, String email) {
     var user = current(principal);
+    if (user.getRole() == AppUser.Role.MECHANIC)
+      throw new ApiException(HttpStatus.FORBIDDEN, "정비사는 이 계정 정보를 수정할 수 없습니다.");
     verifyPassword(user, currentPassword);
     birthDate(birthDate);
     String normalized = phone(phone);
     if (users.findByPhoneNumber(normalized).filter(other -> !other.getId().equals(user.getId())).isPresent())
       throw new ApiException(HttpStatus.CONFLICT, "이미 등록된 휴대폰 번호입니다.");
+    boolean emailChanged = changeEmail(user, email);
     user.updateProfile(name(name), normalized, birthDate);
+    save(user);
     if (user.getRole() == AppUser.Role.ADMIN) audit(user, user, "PROFILE_UPDATED", "관리자 개인정보 변경");
+    if (emailChanged && user.getRole() == AppUser.Role.ADMIN)
+      audit(user, user, "EMAIL_CHANGED", "관리자 로그인 이메일 변경");
+    return UserView.from(user);
+  }
+
+  @Transactional
+  public UserView changeMechanicEmail(Principal principal, String currentPassword, String email) {
+    var user = current(principal);
+    if (user.getRole() != AppUser.Role.MECHANIC)
+      throw new ApiException(HttpStatus.FORBIDDEN, "정비사 계정에서만 사용할 수 있습니다.");
+    verifyPassword(user, currentPassword);
+    changeEmail(user, email);
     return UserView.from(save(user));
+  }
+
+  private boolean changeEmail(AppUser user, String requested) {
+    if (requested == null) return false;
+    String normalized = validatedEmail(requested);
+    if (normalized.equals(user.getEmail())) return false;
+    if (users.existsByEmail(normalized))
+      throw new ApiException(HttpStatus.CONFLICT, "이미 등록된 이메일입니다.");
+    user.changeEmail(normalized);
+    return true;
   }
 
   @Transactional

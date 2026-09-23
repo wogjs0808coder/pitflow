@@ -12,6 +12,7 @@ import com.pitflow.user.*;
 import jakarta.validation.Validator;
 import java.time.LocalDate;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -43,6 +44,7 @@ class AccountIntegrationTest {
     var owned = users.findAll().stream().filter(u -> u.getEmail().startsWith("p6-")).toList();
     for (var user : owned) {
       db.update("DELETE FROM admin_account_audit WHERE actor_id=? OR target_id=?", user.getId(), user.getId());
+      db.update("DELETE FROM mechanics WHERE user_id=?", user.getId());
     }
     owned.forEach(users::delete);
     users.flush();
@@ -178,7 +180,7 @@ class AccountIntegrationTest {
   @Test
   void bootstrapPromotesExistingAdminWithoutReplacingId() {
     var existing = create("bootstrap", AppUser.Role.ADMIN, null);
-    var bootstrap = new AdminBootstrap(users, encoder, validator, existing.getEmail(),
+    var bootstrap = new AdminBootstrap(users, encoder, validator, db, existing.getEmail(),
         "Legacy-password-over-20");
     transactions.executeWithoutResult(status -> bootstrap.run(null));
     var promoted = users.findByEmail(existing.getEmail()).orElseThrow();
@@ -190,7 +192,7 @@ class AccountIntegrationTest {
 
   @Test
   void adminSelfRegistrationFailsClosedWhenCodeIsUnconfigured() {
-    var service = new AccountService(users, encoder, db, "");
+    var service = new AccountService(users, encoder, db, validator, "");
     assertThatThrownBy(() -> service.selfRegisterAdmin("p6-closed@example.com", PASSWORD,
         "01088889999", LocalDate.of(1990, 1, 2), "any-code"))
         .isInstanceOf(com.pitflow.common.ApiException.class);
@@ -257,5 +259,147 @@ class AccountIntegrationTest {
         .andExpect(jsonPath("$[?(@.action=='DEACTIVATED')]").isNotEmpty())
         .andExpect(jsonPath("$[?(@.action=='PROFILE_UPDATED')]").isNotEmpty())
         .andExpect(jsonPath("$[?(@.action=='PASSWORD_CHANGED')]").isNotEmpty());
+  }
+
+  @Test
+  void customerEmailChangeNormalizesAndRequiresReloginWithoutChangingPassword() throws Exception {
+    var customer = create("email-customer", AppUser.Role.CUSTOMER, "01012340001");
+    String originalHash = customer.getPasswordHash();
+    var login = mvc.perform(post("/api/auth/login").with(csrf())
+        .param("email", customer.getEmail()).param("password", PASSWORD))
+        .andExpect(status().isOk()).andReturn();
+    var session = (org.springframework.mock.web.MockHttpSession) login.getRequest().getSession(false);
+    mvc.perform(put("/api/auth/profile").session(session).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("name", "고객",
+            "email", " P6-EMAIL-CUSTOMER@EXAMPLE.COM ", "phoneNumber", "01012340001",
+            "birthDate", "1990-01-02", "currentPassword", PASSWORD))))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.email").value(customer.getEmail()));
+    assertThat(session.isInvalid()).isFalse();
+    mvc.perform(get("/api/auth/me").session(session)).andExpect(status().isOk());
+    String changed = body(Map.of("name", "새 고객", "email", "  P6-NEW-CUSTOMER@EXAMPLE.COM  ",
+        "phoneNumber", "01012340001", "birthDate", "1990-01-02", "currentPassword", PASSWORD));
+    mvc.perform(put("/api/auth/profile").session(session).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(changed))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.email").value("p6-new-customer@example.com"));
+    assertThat(session.isInvalid()).isTrue();
+    var persisted = users.findById(customer.getId()).orElseThrow();
+    assertThat(persisted.getPasswordHash()).isEqualTo(originalHash);
+    assertThat(persisted.getName()).isEqualTo("새 고객");
+    assertThat(persisted.getPhoneNumber()).isEqualTo("01012340001");
+    mvc.perform(get("/api/auth/me").with(user(customer.getEmail())))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(post("/api/auth/login").with(csrf()).param("email", customer.getEmail())
+        .param("password", PASSWORD)).andExpect(status().isUnauthorized());
+    mvc.perform(post("/api/auth/login").with(csrf()).param("email", persisted.getEmail())
+        .param("password", PASSWORD)).andExpect(status().isOk());
+  }
+
+  @Test
+  void emailChangeRejectsInvalidDuplicateAndWrongPasswordButAllowsSameEmail() throws Exception {
+    var customer = create("email-validation", AppUser.Role.CUSTOMER, "01012340002");
+    var other = create("email-taken", AppUser.Role.CUSTOMER, "01012340003");
+    String oldHash = customer.getPasswordHash();
+    String template = body(Map.of("name", "고객", "email", "p6-next@example.com",
+        "phoneNumber", "01012340002", "birthDate", "1990-01-02", "currentPassword", PASSWORD));
+    mvc.perform(put("/api/auth/profile").with(user(customer.getEmail()))
+        .contentType(MediaType.APPLICATION_JSON).content(template)).andExpect(status().isForbidden());
+    mvc.perform(put("/api/auth/profile").with(user(customer.getEmail())).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(template.replace(PASSWORD, "wrong")))
+        .andExpect(status().isForbidden());
+    mvc.perform(put("/api/auth/profile").with(user(customer.getEmail())).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(template.replace("p6-next@example.com", "bad-email")))
+        .andExpect(status().isBadRequest());
+    mvc.perform(put("/api/auth/profile").with(user(customer.getEmail())).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(template.replace("p6-next@example.com", "   ")))
+        .andExpect(status().isBadRequest());
+    mvc.perform(put("/api/auth/profile").with(user(customer.getEmail())).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(template.replace("p6-next@example.com", other.getEmail())))
+        .andExpect(status().isConflict());
+    mvc.perform(put("/api/auth/profile").with(user(customer.getEmail())).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(template.replace("p6-next@example.com", " P6-EMAIL-VALIDATION@EXAMPLE.COM ")))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.email").value(customer.getEmail()));
+    assertThat(users.findById(customer.getId()).orElseThrow().getPasswordHash()).isEqualTo(oldHash);
+  }
+
+  @Test
+  void adminsCanChangeEmailWithAuditIncludingMainAdmin() throws Exception {
+    var main = create("email-main", AppUser.Role.ADMIN, "01012340004");
+    main.designateMainAdmin(); users.saveAndFlush(main);
+    var admin = create("email-admin", AppUser.Role.ADMIN, "01012340005");
+    for (var target : new AppUser[] {admin, main}) {
+      String newEmail = target == main ? "p6-main-new@example.com" : "p6-admin-new@example.com";
+      String oldHash = target.getPasswordHash();
+      mvc.perform(put("/api/auth/profile").with(user(target.getEmail()).roles("ADMIN")).with(csrf())
+          .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("name", "위조된 이름",
+              "email", newEmail, "phoneNumber", target.getPhoneNumber(),
+              "birthDate", "1990-01-02", "currentPassword", PASSWORD))))
+          .andExpect(status().isOk()).andExpect(jsonPath("$.email").value(newEmail));
+      var updated = users.findById(target.getId()).orElseThrow();
+      assertThat(updated.getPasswordHash()).isEqualTo(oldHash);
+      assertThat(updated.isMainAdmin()).isEqualTo(target.isMainAdmin());
+      assertThat(updated.getName()).isEqualTo(target.isMainAdmin() ? "메인 관리자" : "관리자");
+      assertThat(db.queryForObject("SELECT COUNT(*) FROM admin_account_audit WHERE target_id=? AND action='EMAIL_CHANGED' AND detail='관리자 로그인 이메일 변경'",
+          Integer.class, target.getId())).isEqualTo(1);
+      mvc.perform(post("/api/auth/login").with(csrf()).param("email", newEmail)
+          .param("password", PASSWORD)).andExpect(status().isOk())
+          .andExpect(jsonPath("$.role").value("ADMIN"));
+    }
+    mvc.perform(get("/api/admin/accounts").with(user("p6-main-new@example.com").roles("ADMIN")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void mechanicCanChangeOnlyOwnEmail() throws Exception {
+    var mechanic = create("email-mechanic", AppUser.Role.MECHANIC, null);
+    var customer = create("email-only-denied", AppUser.Role.CUSTOMER, "01012340006");
+    db.update("INSERT INTO mechanics (id,user_id,code,name,active) VALUES (?,?,'P6-EMAIL-MECH','정비사',TRUE)",
+        UUID.randomUUID(), mechanic.getId());
+    String oldHash = mechanic.getPasswordHash();
+    mvc.perform(put("/api/auth/profile/email").with(user(mechanic.getEmail()).roles("MECHANIC")).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("email", " P6-MECH-NEW@EXAMPLE.COM ",
+            "currentPassword", PASSWORD))))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.email").value("p6-mech-new@example.com"));
+    mvc.perform(put("/api/auth/profile").with(user("p6-mech-new@example.com").roles("MECHANIC")).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("name", "다른 이름",
+            "phoneNumber", "01012340006", "birthDate", "1990-01-02", "currentPassword", PASSWORD))))
+        .andExpect(status().isForbidden());
+    var updated = users.findById(mechanic.getId()).orElseThrow();
+    assertThat(updated.getName()).isEqualTo(mechanic.getName());
+    assertThat(updated.getPhoneNumber()).isNull();
+    assertThat(updated.getBirthDate()).isNull();
+    assertThat(updated.getPasswordHash()).isEqualTo(oldHash);
+    mvc.perform(post("/api/auth/login").with(csrf()).param("email", mechanic.getEmail())
+        .param("password", PASSWORD)).andExpect(status().isUnauthorized());
+    mvc.perform(post("/api/auth/login").with(csrf()).param("email", updated.getEmail())
+        .param("password", PASSWORD)).andExpect(status().isOk());
+    mvc.perform(put("/api/auth/profile/email").with(user(customer.getEmail())).with(csrf())
+        .contentType(MediaType.APPLICATION_JSON).content(body(Map.of("email", "p6-denied@example.com",
+            "currentPassword", PASSWORD)))).andExpect(status().isForbidden());
+  }
+
+  @Test
+  void bootstrapKeepsExistingMainAdminAfterEmailAndEnvironmentChange() {
+    var main = create("bootstrap-main", AppUser.Role.ADMIN, null);
+    main.designateMainAdmin(); users.saveAndFlush(main);
+    var other = create("bootstrap-other", AppUser.Role.ADMIN, null);
+    String changedEmail = "p6-bootstrap-renamed@example.com";
+    main.changeEmail(changedEmail); users.saveAndFlush(main);
+    var bootstrap = new AdminBootstrap(users, encoder, validator, db, other.getEmail(), PASSWORD);
+    transactions.executeWithoutResult(status -> bootstrap.run(null));
+    assertThat(users.findById(main.getId()).orElseThrow().getEmail()).isEqualTo(changedEmail);
+    assertThat(users.findById(other.getId()).orElseThrow().isMainAdmin()).isFalse();
+    assertThat(users.findAllByRole(AppUser.Role.ADMIN).stream().filter(AppUser::isMainAdmin).count()).isEqualTo(1);
+  }
+
+  @Test
+  void bootstrapCreatesFirstMainAdminWhenNoneExists() {
+    var bootstrap = new AdminBootstrap(users, encoder, validator, db,
+        "p6-first-main@example.com", PASSWORD);
+    transactions.executeWithoutResult(status -> bootstrap.run(null));
+    var created = users.findByEmail("p6-first-main@example.com").orElseThrow();
+    assertThat(created.isMainAdmin()).isTrue();
+    assertThat(encoder.matches(PASSWORD, created.getPasswordHash())).isTrue();
+    transactions.executeWithoutResult(status -> bootstrap.run(null));
+    assertThat(users.findAllByRole(AppUser.Role.ADMIN).stream().filter(AppUser::isMainAdmin).count()).isEqualTo(1);
   }
 }

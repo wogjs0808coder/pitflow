@@ -2393,6 +2393,49 @@ input[type="checkbox"], .work-panel input[type="checkbox"] {width:18px;height:18
 
 /* Phase 3E — work feedback and operational controls */
 
+.app-toast-layer {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 110;
+  width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.app-toast {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 14px;
+  border: 1px solid #bad9c4;
+  border-radius: 10px;
+  background: var(--white);
+  box-shadow: 0 12px 30px rgba(19, 40, 48, 0.13);
+  pointer-events: auto;
+  overflow-wrap: anywhere;
+}
+
+.app-toast.error { border-color: #e5bfc5; }
+.app-toast-indicator {
+  flex: 0 0 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.app-toast.error .app-toast-indicator { background: var(--danger); }
+.app-toast > span:nth-child(2) { flex: 1; font-size: 0.875rem; font-weight: 600; }
+.app-toast button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .app-toast-layer { top: 12px; right: 12px; width: calc(100vw - 24px); }
+}
+
 .work-feedback-layer {
   position: fixed;
   top: 92px;

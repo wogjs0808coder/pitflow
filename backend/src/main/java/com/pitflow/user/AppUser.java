@@ -95,6 +95,8 @@ public class AppUser {
     this.birthDate = birthDate;
   }
 
+  public void changeEmail(String email) { this.email = email; }
+
   public void changePassword(String passwordHash) { this.passwordHash = passwordHash; }
 
   public void designateMainAdmin() {
