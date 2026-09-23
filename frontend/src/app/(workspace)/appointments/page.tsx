@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarPlus, RefreshCw } from "lucide-react";
 import { api, errorText } from "@/lib/api";
 import {
@@ -12,9 +13,17 @@ import {
 import { AppointmentCard } from "@/components/appointment-card";
 
 export default function AppointmentsPage() {
-  const [month, setMonth] = useState(() =>
-    seoulToday().slice(0, 7),
-  );
+  return <Suspense fallback={<p role="status">예약 내역을 불러오는 중입니다…</p>}>
+    <AppointmentsContent />
+  </Suspense>;
+}
+
+function AppointmentsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedMonth = searchParams.get("month");
+  const month = requestedMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)
+    ? requestedMonth : seoulToday().slice(0, 7);
   const [appointments, setAppointments] =
     useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,19 +31,6 @@ export default function AppointmentsPage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-
-  useEffect(() => {
-    const requested = new URLSearchParams(
-      window.location.search,
-    ).get("month");
-
-    if (
-      requested &&
-      /^\d{4}-(0[1-9]|1[0-2])$/.test(requested)
-    ) {
-      setMonth(requested);
-    }
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -47,7 +43,9 @@ export default function AppointmentsPage() {
       `/api/appointments?from=${range.from}&to=${range.to}`,
       { signal: controller.signal },
     )
-      .then(setAppointments)
+      .then((rows) => {
+        if (!controller.signal.aborted) setAppointments(rows);
+      })
       .catch((e) => {
         if (!controller.signal.aborted) {
           setError(errorText(e));
@@ -127,8 +125,10 @@ export default function AppointmentsPage() {
             value={month}
             disabled={!!busy}
             onChange={(e) => {
-              if (/^\d{4}-\d{2}$/.test(e.target.value)) {
-                setMonth(e.target.value);
+              if (/^\d{4}-(0[1-9]|1[0-2])$/.test(e.target.value)) {
+                const next = new URLSearchParams(searchParams.toString());
+                next.set("month", e.target.value);
+                router.push(`/appointments?${next.toString()}`, { scroll: false });
               }
             }}
           />

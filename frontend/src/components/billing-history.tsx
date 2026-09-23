@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorText, won } from "@/lib/api";
 import { useAuth } from "./auth-provider";
 import {
@@ -20,9 +20,28 @@ export function BillingHistory() {
   const [selectedVehicle, setSelectedVehicle] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState("");
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState("");
+  const [linkNotice, setLinkNotice] = useState("");
+  const [requestedInvoiceId, setRequestedInvoiceId] = useState("");
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const deepLinkHandled = useRef(false);
+  const scrollToInvoice = useRef("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState("");
+
+  useEffect(() => {
+    setRequestedInvoiceId(new URLSearchParams(window.location.search).get("invoiceId") ?? "");
+  }, []);
+
+  function toggleInvoice(id: string) {
+    const next = selectedInvoice === id ? "" : id;
+    setSelectedInvoice(next);
+    setInvoice(null);
+    setInvoiceError("");
+    setInvoiceLoading(!!next);
+  }
 
   async function pay(invoiceId: string) {
     setPayingInvoice(invoiceId);
@@ -47,6 +66,9 @@ export function BillingHistory() {
     const controller = new AbortController();
     setSelectedInvoice("");
     setInvoice(null);
+    setInvoiceLoading(false);
+    setInvoiceError("");
+    setHistoryLoaded(false);
     setLoading(true);
     setError("");
     const query = selectedVehicle ? `?vehicleId=${selectedVehicle}` : "";
@@ -54,7 +76,10 @@ export function BillingHistory() {
       signal: controller.signal,
     })
       .then((rows) => {
-        if (!controller.signal.aborted) setHistory(rows);
+        if (!controller.signal.aborted) {
+          setHistory(rows);
+          setHistoryLoaded(true);
+        }
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(errorText(e));
@@ -66,9 +91,22 @@ export function BillingHistory() {
   }, [user, selectedVehicle]);
 
   useEffect(() => {
+    if (!requestedInvoiceId || !historyLoaded || deepLinkHandled.current) return;
+    deepLinkHandled.current = true;
+    if (history.some((work) => work.invoices.some((row) => row.id === requestedInvoiceId))) {
+      scrollToInvoice.current = requestedInvoiceId;
+      setSelectedInvoice(requestedInvoiceId);
+    } else {
+      setLinkNotice("요청한 정산 명세를 현재 이력에서 찾을 수 없습니다. 전체 이력은 계속 확인할 수 있습니다.");
+    }
+  }, [requestedInvoiceId, historyLoaded, history]);
+
+  useEffect(() => {
     setInvoice(null);
-    if (!selectedInvoice || !user) return;
+    setInvoiceError("");
+    if (!selectedInvoice || !user) { setInvoiceLoading(false); return; }
     const controller = new AbortController();
+    setInvoiceLoading(true);
     api<InvoiceDetail>(`/api/billing/invoices/${selectedInvoice}`, {
       signal: controller.signal,
     })
@@ -76,10 +114,24 @@ export function BillingHistory() {
         if (!controller.signal.aborted) setInvoice(row);
       })
       .catch((e) => {
-        if (!controller.signal.aborted) setError(errorText(e));
+        if (!controller.signal.aborted) setInvoiceError(errorText(e));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setInvoiceLoading(false);
       });
     return () => controller.abort();
   }, [selectedInvoice, user]);
+
+  useEffect(() => {
+    if (!invoice || invoice.id !== scrollToInvoice.current || selectedInvoice !== invoice.id) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`history-invoice-${invoice.id}`)?.scrollIntoView({
+        behavior: "smooth", block: "center",
+      });
+      scrollToInvoice.current = "";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [invoice, selectedInvoice]);
 
   if (!user) return <p role="alert">로그인이 필요합니다.</p>;
   const unpaid = history
@@ -100,6 +152,7 @@ export function BillingHistory() {
           {error}
         </div>
       )}
+      {linkNotice && <div className="notice" role="status">{linkNotice}</div>}
       {unpaid.length > 0 && (
         <section className="work-panel history-payment-summary">
           <div>
@@ -127,7 +180,14 @@ export function BillingHistory() {
           차량 선택
           <select
             value={selectedVehicle}
-            onChange={(e) => setSelectedVehicle(e.target.value)}
+            onChange={(e) => {
+              setSelectedVehicle(e.target.value);
+              setLinkNotice("");
+              scrollToInvoice.current = "";
+              const url = new URL(window.location.href);
+              url.searchParams.delete("invoiceId");
+              window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+            }}
           >
             <option value="">모든 차량</option>
             {vehicles.map((vehicle) => (
@@ -173,10 +233,12 @@ export function BillingHistory() {
               <h3>정산 명세</h3>
               {work.invoices.length ? (
                 work.invoices.map((row) => (
-                  <div className="history-invoice-block" key={row.id}>
+                  <div className="history-invoice-block" id={`history-invoice-${row.id}`} key={row.id}>
                     <button
-                      className="history-invoice"
-                      onClick={() => setSelectedInvoice(row.id)}
+                      className={`history-invoice ${selectedInvoice === row.id ? "selected" : ""}`}
+                      aria-expanded={selectedInvoice === row.id}
+                      aria-controls={selectedInvoice === row.id ? `history-invoice-detail-${row.id}` : undefined}
+                      onClick={() => toggleInvoice(row.id)}
                     >
                       <span>
                         {row.status === "OPEN" ? "유효" : "취소"} ·{" "}
@@ -184,6 +246,13 @@ export function BillingHistory() {
                       </span>
                       <strong>{won(Number(row.total))}</strong>
                     </button>
+                    {selectedInvoice === row.id && <div id={`history-invoice-detail-${row.id}`}>
+                      {invoiceError ? <div className="error" role="alert">{invoiceError}</div>
+                        : invoiceLoading || invoice?.id !== row.id
+                          ? <p className="muted" role="status">정산 명세를 불러오는 중입니다…</p>
+                          : <CustomerInvoiceDetail invoice={invoice} payingInvoice={payingInvoice} pay={pay} />
+                      }
+                    </div>}
                     {row.status === "VOID" ? (
                       <span className="muted">취소된 명세</span>
                     ) : Number(row.balance) > 0 ? (
@@ -216,8 +285,17 @@ export function BillingHistory() {
       ) : (
         <p className="empty-state">완료되거나 취소된 정비 이력이 없습니다.</p>
       )}
-      {invoice && (
-        <div className="work-panel">
+    </>
+  );
+}
+
+function CustomerInvoiceDetail({ invoice, payingInvoice, pay }: {
+  invoice: InvoiceDetail;
+  payingInvoice: string;
+  pay: (invoiceId: string) => Promise<void>;
+}) {
+  return (
+        <div className="history-invoice-detail">
           <h2>정산 명세 상세 · {invoice.plate_number}</h2>
           <p>
             {invoice.status === "OPEN" ? "유효" : "취소됨"} ·{" "}
@@ -258,8 +336,6 @@ export function BillingHistory() {
             </article>
           ))}
         </div>
-      )}
-    </>
   );
 }
 

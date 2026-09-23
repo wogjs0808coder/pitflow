@@ -77,7 +77,8 @@ export function TossPaymentResult({ invoiceId, paymentKey, orderId, amount, fail
       <p>{message}</p>
       <Link
         className="button secondary"
-        href={admin ? `/admin/billing?invoiceId=${invoiceId}` : "/history"}
+        href={admin ? `/admin/billing?invoiceId=${encodeURIComponent(invoiceId)}`
+          : invoiceId ? `/history?invoiceId=${encodeURIComponent(invoiceId)}` : "/history"}
       >
         {admin ? "정산·수납 관리로 돌아가기" : "정비 이력·수납으로 돌아가기"}
       </Link>

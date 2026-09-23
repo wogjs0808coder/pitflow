@@ -5,11 +5,12 @@ import { useAuth } from "@/components/auth-provider";
 import { BookingCalendarSettings } from "@/components/booking-calendar-settings";
 import { AppointmentCard } from "@/components/appointment-card";
 import { api, errorText } from "@/lib/api";
-import { Appointment, AppointmentStatus, WorkBay, BookingPolicy, addDays, seoulToday, dayLabel, timeLabel, statusLabel, actionLabel } from "@/lib/appointments";
+import { Appointment, AppointmentStatus, WorkBay, BookingPolicy, addDays, monthRange, seoulToday, dayLabel, timeLabel, statusLabel, actionLabel } from "@/lib/appointments";
 
 export default function AdminAppointmentsPage() {
   const { user } = useAuth();
   const [date, setDate] = useState(seoulToday);
+  const [month, setMonth] = useState(() => seoulToday().slice(0, 7));
   const [data, setData] = useState<{ appointments: Appointment[]; bays: WorkBay[]; policy: BookingPolicy } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -21,31 +22,45 @@ export default function AdminAppointmentsPage() {
     if (user?.role !== "ADMIN") return;
     const controller = new AbortController();
     const options = { signal: controller.signal };
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setData(null);
+    const range = monthRange(month);
     Promise.all([
-      api<Appointment[]>(`/api/admin/appointments?from=${date}&to=${date}`, options),
+      api<Appointment[]>(`/api/admin/appointments?from=${range.from}&to=${range.to}`, options),
       api<WorkBay[]>("/api/admin/work-bays", options),
       api<BookingPolicy>("/api/appointments/policy", options),
     ]).then(([appointments, bays, policy]) => {
       if (controller.signal.aborted) return;
       setData({ appointments, bays, policy });
-      setSelectedId(id => appointments.some(a => a.id === id) ? id : appointments[0]?.id ?? null);
     }).catch(e => { if (!controller.signal.aborted) setError(errorText(e)); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [date, user?.role, revision]);
+  }, [month, user?.role, revision]);
+  useEffect(() => {
+    if (!data) return;
+    const daily = data.appointments.filter(a => a.startsAt.slice(0, 10) === date);
+    setSelectedId(id => daily.some(a => a.id === id) ? id : daily[0]?.id ?? null);
+  }, [data, date]);
   if (user?.role !== "ADMIN") return <div className="error" role="alert">관리자만 예약 캘린더를 확인할 수 있습니다.</div>;
-  const selected = data?.appointments.find(a => a.id === selectedId);
-  const active = data?.appointments.filter(a => a.status !== "CANCELLED" && a.status !== "NO_SHOW") ?? [];
-  const inactive = data?.appointments.filter(a => a.status === "CANCELLED" || a.status === "NO_SHOW") ?? [];
+  const dailyAppointments = data?.appointments.filter(a => a.startsAt.slice(0, 10) === date) ?? [];
+  const selected = dailyAppointments.find(a => a.id === selectedId);
+  const active = dailyAppointments.filter(a => a.status !== "CANCELLED" && a.status !== "NO_SHOW");
+  const inactive = dailyAppointments.filter(a => a.status === "CANCELLED" || a.status === "NO_SHOW");
   // Preserve a column for historical reservations even if a bay has since been disabled.
   const bays = [...(data?.bays ?? [])];
-  data?.appointments.forEach(a => { if (!bays.some(b => b.id === a.workBayId)) bays.push({ id: a.workBayId, name: a.workBayName }); });
+  dailyAppointments.forEach(a => { if (!bays.some(b => b.id === a.workBayId)) bays.push({ id: a.workBayId, name: a.workBayName }); });
   const toMinute = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
   const open = data ? Math.min(toMinute(data.policy.opensAt), ...active.map(a => toMinute(timeLabel(a.startsAt)))) : 540;
   const close = data ? Math.max(toMinute(data.policy.closesAt), ...active.map(a => toMinute(timeLabel(a.endsAt)))) : 1080;
   const times = Array.from({ length: (close - open) / 30 }, (_, i) => `${String(Math.floor((open + i * 30) / 60)).padStart(2, "0")}:${String((open + i * 30) % 60).padStart(2, "0")}`);
-  function moveDate(next: string) { if (next) { setDate(next); setNotice(""); } }
+  function moveDate(next: string) { if (next) { setDate(next); setMonth(next.slice(0, 7)); setNotice(""); } }
+  function moveMonth(offset: number) {
+    const next = new Date(`${month}-01T12:00:00Z`);
+    next.setUTCMonth(next.getUTCMonth() + offset);
+    moveDate(next.toISOString().slice(0, 7) + "-01");
+  }
+  const firstWeekday = (new Date(`${month}-01T12:00:00Z`).getUTCDay() + 6) % 7;
+  const daysInMonth = Number(monthRange(month).to.slice(8));
+  const today = seoulToday();
   async function change(status: AppointmentStatus) {
     if (!selected || busy) return;
     if (!window.confirm(`${selected.customerName}님의 예약을 ‘${statusLabel[status]}’ 상태로 변경하시겠습니까?`)) return;
@@ -59,13 +74,30 @@ export default function AdminAppointmentsPage() {
   return <>
     <div className="page-heading"><div><span className="eyebrow">SERVICE SCHEDULE</span><h1>예약 캘린더</h1><p>작업 공간별 일정을 확인하고 예약 상태를 관리하세요.</p></div><CalendarDays size={32} /></div>
     <BookingCalendarSettings onSaved={() => { setRevision(n => n + 1); setNotice("휴무 설정을 저장했습니다."); }} />
+    <section className="calendar-panel admin-month-overview" aria-label="월간 예약 현황">
+      <div className="section-heading"><div><span className="eyebrow">MONTHLY OVERVIEW</span><h2>{month.slice(0, 4)}년 {Number(month.slice(5))}월</h2></div>
+        <div className="calendar-date-controls"><button type="button" className="button secondary" aria-label="이전 달" disabled={busy} onClick={() => moveMonth(-1)}><ChevronLeft size={18} /></button><button type="button" className="button secondary" disabled={busy} onClick={() => moveMonth(1)} aria-label="다음 달"><ChevronRight size={18} /></button></div>
+      </div>
+      {loading ? <p role="status">월간 예약을 불러오는 중입니다…</p> : data && <div className="admin-month-scroll" tabIndex={0} aria-label="월간 캘린더 스크롤 영역"><div className="admin-month-grid">
+        {["월", "화", "수", "목", "금", "토", "일"].map(day => <span className="admin-month-weekday" key={day}>{day}</span>)}
+        {Array.from({ length: firstWeekday }, (_, index) => <span key={`blank-${index}`} aria-hidden="true" />)}
+        {Array.from({ length: daysInMonth }, (_, index) => {
+          const day = `${month}-${String(index + 1).padStart(2, "0")}`;
+          const rows = data.appointments.filter(a => a.startsAt.slice(0, 10) === day);
+          const pending = rows.filter(a => a.status === "PENDING").length;
+          return <button type="button" key={day} className={`admin-month-day ${day === date ? "selected" : ""} ${day === today ? "today" : ""}`}
+            disabled={busy} aria-pressed={day === date} aria-label={`${day} 예약 ${rows.length}건${pending ? `, 확인 대기 ${pending}건` : ""}`}
+            onClick={() => moveDate(day)}><strong>{index + 1}</strong><span>예약 {rows.length}건</span>{pending > 0 && <small>대기 {pending}</small>}</button>;
+        })}
+      </div></div>}
+    </section>
     <div className="booking-toolbar">
       <div className="calendar-date-controls"><button className="button secondary" aria-label="이전 날짜" disabled={busy} onClick={() => moveDate(addDays(date, -1))}><ChevronLeft size={18} /></button><label>조회 날짜<input type="date" value={date} disabled={busy} onChange={e => moveDate(e.target.value)} /></label><button className="button secondary" aria-label="다음 날짜" disabled={busy} onClick={() => moveDate(addDays(date, 1))}><ChevronRight size={18} /></button></div>
       <div className="calendar-date-controls"><button className="button secondary" disabled={busy} onClick={() => moveDate(seoulToday())}>오늘</button><button className="button secondary" disabled={loading || busy} onClick={() => setRevision(n => n + 1)}><RefreshCw size={16} />새로고침</button></div>
     </div>
     {error && <div className="error" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
     {loading ? <p role="status">일정을 불러오는 중입니다…</p> : data && <>
-      <div className="calendar-metrics"><div><span>전체 예약</span><strong>{data.appointments.length}<small>건</small></strong></div><div><span>확인 대기</span><strong>{data.appointments.filter(a => a.status === "PENDING").length}<small>건</small></strong></div><div><span>예약 확정</span><strong>{data.appointments.filter(a => a.status === "CONFIRMED").length}<small>건</small></strong></div><div><span>방문 완료</span><strong>{data.appointments.filter(a => a.status === "VISITED").length}<small>건</small></strong></div></div>
+      <div className="calendar-metrics"><div><span>전체 예약</span><strong>{dailyAppointments.length}<small>건</small></strong></div><div><span>확인 대기</span><strong>{dailyAppointments.filter(a => a.status === "PENDING").length}<small>건</small></strong></div><div><span>예약 확정</span><strong>{dailyAppointments.filter(a => a.status === "CONFIRMED").length}<small>건</small></strong></div><div><span>방문 완료</span><strong>{dailyAppointments.filter(a => a.status === "VISITED").length}<small>건</small></strong></div></div>
       <div className="calendar-layout">
         <section className="calendar-panel" aria-label="작업 공간별 예약 시간표"><div className="section-heading"><h2>{dayLabel(date)}</h2><span className="booking-caption">한국 시간 · 30분 간격</span></div>
           {!active.length && <p className="muted">이 날은 진행할 예약이 없습니다.</p>}
