@@ -3,6 +3,10 @@ export type User = {
   email: string;
   name: string;
   role: "CUSTOMER" | "ADMIN" | "MECHANIC";
+  phoneNumber: string | null;
+  birthDate: string | null;
+  profileComplete: boolean;
+  mainAdmin: boolean;
 };
 export type Vehicle = {
   id: string;

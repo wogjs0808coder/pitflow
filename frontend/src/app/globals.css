@@ -215,7 +215,8 @@ nav {
   white-space: nowrap;
   font-size: 0.875rem;
 }
-.profile-text span {
+.profile-text span,
+.profile-text a {
   font-size: 0.75rem;
   color: #9db1b9;
 }
@@ -1246,6 +1247,30 @@ textarea {
 }
 .stack-form .button {
   margin-top: 6px;
+}
+.birth-date-field {
+  display: grid;
+  gap: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  min-width: 0;
+}
+.birth-date-input {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.birth-date-input input[type="text"] {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.birth-date-input input[type="date"] {
+  flex: 0 1 150px;
+  min-width: 0;
+}
+@media (max-width: 480px) {
+  .birth-date-input { flex-wrap: wrap; }
+  .birth-date-input input[type="date"] { flex: 1 1 150px; }
 }
 .auth-switch {
   margin-top: 26px;

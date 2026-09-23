@@ -27,12 +27,13 @@ public class SecurityConfig {
               .findByEmail(email.strip().toLowerCase(Locale.ROOT))
               .orElseThrow(() -> new UsernameNotFoundException("Invalid credentials"));
       boolean enabled =
-          u.getRole() != AppUser.Role.MECHANIC
+          (u.getRole() != AppUser.Role.ADMIN || u.isAdminActive())
+              && (u.getRole() != AppUser.Role.MECHANIC
               || Boolean.TRUE.equals(
                   db.queryForObject(
                       "SELECT COUNT(*) > 0 FROM mechanics WHERE user_id=? AND active=TRUE",
                       Boolean.class,
-                      u.getId()));
+                      u.getId())));
       return User.withUsername(u.getEmail())
           .password(u.getPasswordHash())
           .roles(u.getRole().name())
@@ -49,6 +50,9 @@ public class SecurityConfig {
             a.requestMatchers(
                     "/api/auth/csrf",
                     "/api/auth/register",
+                    "/api/auth/find-id",
+                    "/api/auth/reset-password",
+                    "/api/auth/admin-register",
                     "/api/auth/login",
                     "/api/health",
                     "/api/health/ready",

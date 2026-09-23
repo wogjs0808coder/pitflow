@@ -95,7 +95,8 @@ class PhaseOneIntegrationTest {
   @Test
   void registrationHashesPasswordAndCannotAssignAdmin() throws Exception {
     String body =
-        "{\"name\":\"신규 고객\",\"email\":\"NEW@example.com\",\"password\":\"" + PASSWORD + "\"}";
+        "{\"name\":\"신규 고객\",\"email\":\"NEW@example.com\",\"password\":\"" + PASSWORD
+            + "\",\"phoneNumber\":\"010-1234-5678\",\"birthDate\":\"1990-01-01\"}";
     mvc.perform(
             post("/api/auth/register")
                 .with(csrf())

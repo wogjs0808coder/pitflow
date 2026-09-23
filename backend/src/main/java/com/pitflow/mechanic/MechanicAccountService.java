@@ -194,7 +194,9 @@ public class MechanicAccountService {
   }
 
   private void validatePassword(String password) {
-    if (password.getBytes(StandardCharsets.UTF_8).length > 72)
-      throw new ApiException(HttpStatus.BAD_REQUEST, "비밀번호는 UTF-8 기준 72바이트 이하여야 합니다.");
+    if (password.codePointCount(0, password.length()) < 7
+        || password.codePointCount(0, password.length()) > 20
+        || password.getBytes(StandardCharsets.UTF_8).length > 72)
+      throw new ApiException(HttpStatus.BAD_REQUEST, "비밀번호는 7~20자, UTF-8 기준 72바이트 이하여야 합니다.");
   }
 }

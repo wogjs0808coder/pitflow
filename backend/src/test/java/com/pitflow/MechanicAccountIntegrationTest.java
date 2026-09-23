@@ -95,6 +95,20 @@ class MechanicAccountIntegrationTest {
   }
 
   @Test
+  void newMechanicPasswordUsesSevenToTwentyCharacters() throws Exception {
+    String[] candidates = {"Ab123!", "Abc123!", "Abcdefghij123456789!", "Abcdefghij123456789!0"};
+    int[] expected = {400, 201, 201, 400};
+    for (int i = 0; i < candidates.length; i++) {
+      String body = createBody().replace("P2A-01", "P2A-B" + i)
+          .replace("phase2a-mechanic@example.com", "phase2e-boundary" + i + "@example.com")
+          .replace(PASSWORD, candidates[i]);
+      mvc.perform(post("/api/admin/mechanic-accounts").with(user(ADMIN).roles("ADMIN"))
+          .with(csrf()).contentType(MediaType.APPLICATION_JSON).content(body))
+          .andExpect(status().is(expected[i]));
+    }
+  }
+
+  @Test
   void customerCannotUseMechanicAccountManagement() throws Exception {
     mvc.perform(
             post("/api/admin/mechanic-accounts")
